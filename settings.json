@@ -1,0 +1,20 @@
+{
+
+    "security.workspace.trust.untrustedFiles": "open",
+    "[python]": {
+        "editor.defaultFoldingRangeProvider": "ms-python.python"
+    },
+    "launch": {
+        "configurations": [
+            
+            {
+                "names": "Python :Current file",
+                "args":["C:\\Data\\2024\\test_hdf5_2024\\20240722_0048_BR4282_SRV_IBA.lst"]
+            }
+
+        ]
+  
+        
+    }
+
+}
