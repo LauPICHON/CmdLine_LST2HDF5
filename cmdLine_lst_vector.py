@@ -1,124 +1,13 @@
 import h5py, re
 import numpy as np
 import sys, os
-from PyQt5.QtCore import  QThread, pyqtSignal
+# from PyQt5.QtCore import  QThread, pyqtSignal
 import threading
 from datetime import datetime
 from time import perf_counter
-import matplotlib.pyplot as plt
+import configparser
+# import matplotlib.pyplot as plt
 
-
-class ThreadReadLst(QThread):
-
-    valueChanged = pyqtSignal(int)
-
-    def __init__(self,path):
-        self.path = path
-        self.detector = "LE0"
-
-    # Create a counter thread
-
-
-    def run(self):
-
-        # pathlst = "C:\\Dev\\PyPIX\\Data\\26jul0068.lst" #26jul0068.lst
-        pathlst1 = self.path
-        tmpheader = ""
-       # MyResultat = list()
-        header1 = list()
-        sizeX = 1
-        sizeY = 1
-        print("toto")
-        print(pathlst1)
-        fin_header = False
-        t=0
-        with open(pathlst1, "rb") as file_lst:
-
-            while fin_header == False: #tmpheader != b'[LISTDATA]\r\n':
-                tmpheader = file_lst.readline()
-                t+=1
-                # Map size:1280,1280,64,64,0,2564,100000
-                if "Map size" in str(tmpheader):
-                    para = str.split(str(tmpheader), sep=':')
-                    para = str.split(para[1], sep=",")
-                header1.append(tmpheader)
-                fin_header = tmpheader == b'[LISTDATA]\r\n' or tmpheader == b'[LISTDATA]\n' or t > 5000
-                
-            print(header1)
-            print(para[0], para[1], para[2], para[3])
-            sizeX = int(para[0]) / int(para[2])
-            sizeY = int(para[1]) / int(para[3])
-            sizeX = int(sizeX)
-            sizeY = int(sizeY)
-            print(sizeY)
-            print(sizeX)
-            adcnum = []
-            cube = np.zeros((sizeX, sizeY, 2048), 'u4')
-
-            # for i in range (0,50):
-            val = b'\xff\xff\xff\xff'
-            lstcontent = file_lst.read()
-            ind1 = 0
-            nrows = 0
-            ncolumns = 0
-
-            # MainPage.progress.setRange(1,len(lstcontent) -22000000)
-
-            while ind1 < len(lstcontent) - 22000000:
-
-                try:
-                    # val = file_lst.read(4)
-                    val = lstcontent[ind1:ind1 + 4]
-                    ind1 += 4
-                except:
-                    val = b'\xff\xff\xff\xff'
-                    # QtCore.QCoreApplication.processEvents()
-                    # MainPage.progress.setValue(ind1)
-
-                if val == b'\xff\xff\xff\xff':
-                    # val = file_lst.read(4)
-                    val = lstcontent[ind1:ind1 + 4]
-                    ind1 += 4
-                    text = "Events"
-                    self.valueChanged.emit(int(100/len(lstcontent)*ind1))
-
-                val3 = int.from_bytes(val, byteorder='little', signed=False)
-                low1 = val3 & 0xFFFF
-                hight1 = int(val3 >> 16)
-
-                if 0x4000 == hight1:
-                    text = "Valeur tempo"
-                    tempo = low1
-                if 0xFFFF == low1:
-                    text = "Valeur channel"
-                    channel = hight1
-
-                if 0x8000 == hight1:
-                    text = "TAG ADC"
-                    adc = low1
-                    adcnum = []
-                    channel_num = []
-                    for bits in range(8):
-                        if adc & (0b00000001 << bits):
-                            adcnum.append(bits)
-                    if len(adcnum) % 2 == 1:  # & len(adcnum) > 1:
-                        # toto = file_lst.read(2) #Nb croissa nte ADC !!
-                        val = lstcontent[ind1:ind1 + 2]
-                        ind1 += 2
-
-                    for f in adcnum:
-                        val_lue = lstcontent[ind1:ind1 + 2]
-                        ind1 += 2
-                        # val_lue = file_lst.read(2)
-
-                        if f != 4 and f != 5: channel_num.append(int.from_bytes(val_lue, byteorder='little', signed=False))
-                        if f == 4: nrows = int.from_bytes(val_lue, byteorder='little', signed=False)  # Valeur X
-                        if f == 5: ncolumns = int.from_bytes(val_lue, byteorder='little', signed=False)
-                    for c in channel_num:
-                        if (c < 2048) & (nrows < 20) & (ncolumns < 20):
-                            cube[nrows, ncolumns, c] += 1
-
-            AGLAEFile.write_hdf5(cube, self.path, self.detector)
 
 
 class AGLAEFile(object):
@@ -221,26 +110,21 @@ class AGLAEFile(object):
         hdf.close()
 
     @staticmethod
-    def feed_hdf5_map(mydata, Pathlst, detector, FinalHDF, num_det,sizeX,sizeY,nbcanaux,num_scan_y):
-     
+    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y):
+ 
         destfile = Pathlst.split(".")
         newdestfile = destfile[0] + ".hdf5"
-
-        if destfile[1] == 'lst':
-            newdestfile = destfile[0] + ".hdf5"
-        elif destfile[1] == 'edf':
-
-            newdestfile = os.path.join(os.path.dirname(Pathlst), FinalHDF)
     
         with h5py.File(newdestfile, 'a') as h5file:
-            group_name = 'data' + str(num_det) + "_" + detector  # "data"
+            #group_name = 'data' + str(num_det) + "_" + detector  # "data"
+            group_name = detector  # "data"
 
             if num_scan_y != 0:
                     nxData = h5file[f'{group_name}/maps']
+                    #nxData = h5file[f'{group_name}']
                     nxData.resize((nxData.shape[0] + mydata.shape[0],nxData.shape[1] ,nxData.shape[2]))
                     nxData[-mydata.shape[0]:,0:, :] = mydata
-                   
-
+ 
             else:
                     try:
                         del h5file[f'{group_name}']
@@ -248,12 +132,34 @@ class AGLAEFile(object):
                         pass
                     nxData = h5file.require_group(f'{group_name}')
                     dset = nxData.require_dataset('maps', data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
-              
-
-
+                    #dset = h5file.require_dataset(group_name, data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
         h5file.close()
+    
   
-  
+    @staticmethod
+    def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y):
+    
+        detectors = [134,13,14,34] #"1+3+4","3+4","1+4","1+3"]
+        for num_det in detectors:
+           
+            if num_det == 1234:
+                data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
+            elif num_det == 134:
+                data = cube_one_pass_pixe[0] + cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
+                print("1+3+4")
+                print(np.shape(data))
+            elif num_det == 12:
+                data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1]
+            elif num_det == 34:
+                data = cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
+            elif num_det == 14:
+                data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2]
+            elif num_det == 123:
+                data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2]
+            
+            detector_name = ret_adc_name(num_det)
+            AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y)
+
 
     def write_hdf5_metadata(Pathfile,parametre,detname,FinalHDF):
         # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
@@ -775,6 +681,7 @@ class AGLAEFile(object):
                     array_adc = [0,1,2,3,4,6,7,10,11]
                     #array_adc = [0,4]
                     for num_line_adc in array_adc: #range(12):
+                        print(num_line_adc)
                         if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 5: continue
 
                         switcher = {5: nbcanaux_pixe, 0: nbcanaux_pixe, 1: nbcanaux_pixe, 2: nbcanaux_pixe, 3: nbcanaux_pixe, 4: nbcanaux_pixe, 80: nbcanaux_pixe, 81: nbcanaux_pixe,
@@ -1000,7 +907,10 @@ class AGLAEFile(object):
                     elif num_line_adc == 10 or num_line_adc == 11:
                         data = cube_one_pass_gamma[num_line_adc-10]
 
-                    AGLAEFile.feed_hdf5_map(data, path_lst, detector, "FinalHDF", adc2read, sizeX, sizeY,nbcanaux,num_pass_y)
+                    #AGLAEFile.feed_hdf5_map(data, path_lst, detector, "FinalHDF", adc2read, sizeX, sizeY,nbcanaux,num_pass_y)
+                    AGLAEFile.feed_hdf5_map(data, path_lst, detector, num_pass_y)
+
+                AGLAEFile.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y)
                 print("\n")
 
 
@@ -1110,7 +1020,7 @@ def ret_num_adc(detector):
 def ret_adc_name(num_adc):
    switcher = {
                0: "X1",
-               1: "X2", # OFF
+               1: "X2",
                2: "X3",
                3: "X4",
                4: "X0",  # 2A
@@ -1121,6 +1031,12 @@ def ret_adc_name(num_adc):
                9: "Coord_Y",
                10: "GAMMA20",
                11: "GAMMA70",
+               12: "X1+X2",
+               13: "X1+X3",
+               14: "X1+X4",
+               23: "X2+X3",
+               134:"X1+X3+X4",
+               34: "X3+X4",
                             }
    return switcher.get(num_adc)
 
@@ -1175,11 +1091,62 @@ class HDF5Store(object):
 
 
 
-def main(args):
-    print(args[0])
+# def main(args):
+#     print(args[0])
+
+# [NB_CHANNEL]
+# PIXE = 2048
+# RBS = 512
+# GAMMA20 = 2048
+# GAMMA70 = 4096
+
+def read_cfg_adc():
+    config = configparser.ConfigParser()
+    config.read('config_adc.ini')
+    config.sections()
+      
+    nb_channels_pixe = config.getint('NB_CHANNEL', 'PIXE')
+    nb_channels_rbs = config.getint('NB_CHANNEL', 'RBS')
+    nb_channels_gamma20 = config.getint('NB_CHANNEL', 'GAMMA20')
+    nb_channels_gamma70 = config.getint('NB_CHANNEL', 'GAMMA70')
+    
+    section_name = 'NB_CHANNEL'
+
+    for key, value in config[section_name].items():
+        print(f"{key}: {value}")
+    
+    # Lecture des valeurs de la section MPAWIN
+    section_name = 'CFG_MPAWIN'
+
+    for key, value in config[section_name].items():
+        print(f"{key}: {value}")
+    
+    section_name = 'CFG_CONBINED'
+
+    for key, value in config[section_name].items():
+        print(f"{key}: {value}")
+    
+
+
+def main():
+    print("hello")
+    read_cfg_adc()
+    if len(sys.argv) < 2:
+        print("Usage: script.py <arg1> <arg2> ...")
+        return
+
+    for arg in sys.argv[1:]:
+        print(f"Argument: {arg}")
+   
+    _map_parameter = AGLAEFile.open_header_lst(lst_arg[1])
+    print(_map_parameter)
+    AGLAEFile.extract_lst_vector(lst_arg[1],_map_parameter,ADC_X = 8, ADC_Y = 9,)
 
 if __name__ == "__main__":
    lst_arg = sys.argv
-   if len(lst_arg) >1:
-        map_parameter = AGLAEFile.open_header_lst(lst_arg[1])
-        AGLAEFile.extract_lst_vector(lst_arg[1],map_parameter,ADC_X = 8, ADC_Y = 9,)
+   main()
+#    if len(lst_arg) >1:
+#         map_parameter = AGLAEFile.open_header_lst(lst_arg[1])
+#         AGLAEFile.extract_lst_vector(lst_arg[1],map_parameter,ADC_X = 8, ADC_Y = 9,)
+
+
