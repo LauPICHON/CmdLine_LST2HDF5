@@ -6,6 +6,7 @@ import threading
 from datetime import datetime
 from time import perf_counter
 import configparser
+from time import sleep
 # import matplotlib.pyplot as plt
 
 
@@ -14,8 +15,9 @@ class AGLAEFile(object):
     _FILE_LOCK_1 = threading.Lock()
 
     def __init__(self):
-        self.path = "c:/temp/toto.lst"
+        self.path_config_file = "config.ini"
         self.detector = "LE0"
+        self.config_adc_all = {}
 
     @staticmethod
     def save_hdf5_antoine(filename, points_map, spectrums_list, group_name="XRF_Analysis", dataset_name="dataset"):
@@ -110,7 +112,7 @@ class AGLAEFile(object):
         hdf.close()
 
     @staticmethod
-    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y):
+    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y,dict_metadata_one_adc):
  
         destfile = Pathlst.split(".")
         newdestfile = destfile[0] + ".hdf5"
@@ -124,6 +126,8 @@ class AGLAEFile(object):
                     #nxData = h5file[f'{group_name}']
                     nxData.resize((nxData.shape[0] + mydata.shape[0],nxData.shape[1] ,nxData.shape[2]))
                     nxData[-mydata.shape[0]:,0:, :] = mydata
+                    
+
  
             else:
                     try:
@@ -132,36 +136,47 @@ class AGLAEFile(object):
                         pass
                     nxData = h5file.require_group(f'{group_name}')
                     dset = nxData.require_dataset('maps', data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
+                    for exp_attr in dict_metadata_one_adc:
+                        dset.attrs[exp_attr] = dict_metadata_one_adc[exp_attr]
+
+                        
                     #dset = h5file.require_dataset(group_name, data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
         h5file.close()
     
   
     @staticmethod
-    def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y):
+    def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y,_dict_adc_metadata_arr):
     
         detectors = [134,13,14,34] #"1+3+4","3+4","1+4","1+3"]
         for num_det in detectors:
            
             if num_det == 1234:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
+                metadata_one_adc = _dict_adc_metadata_arr[0]
             elif num_det == 134:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
+                metadata_one_adc = _dict_adc_metadata_arr[0]
                 print("1+3+4")
                 print(np.shape(data))
             elif num_det == 12:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1]
+                metadata_one_adc = _dict_adc_metadata_arr[0]
             elif num_det == 34:
                 data = cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
+                metadata_one_adc = _dict_adc_metadata_arr[2]
             elif num_det == 14:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2]
+                metadata_one_adc = _dict_adc_metadata_arr[0]
             elif num_det == 123:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2]
+                metadata_one_adc = _dict_adc_metadata_arr[0]
             
             detector_name = ret_adc_name(num_det)
-            AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y)
+
+            AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
 
 
-    def write_hdf5_metadata(Pathfile,parametre,detname,FinalHDF):
+    def write_hdf5_metadata(Pathfile, dict_glob_metadata):
         # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
         head_tail = os.path.split(Pathfile)# Split le Path et le fichier
         destfile = head_tail[1].split(".")
@@ -169,19 +184,14 @@ class AGLAEFile(object):
         index_iba= destfile[0].find("_IBA_")
         index_l1 = destfile[0].find("_L1_")
         index_xrf = destfile[0].find("_XRF1_:")
-        det_aglae = ["LE0", "HE1", "HE2", "HE3", "HE4", "HE10", "HE11","HE12","HE13","RBS","RBS150","RBS135","GAMMA","GAMMA70","GAMMA20","IBIL","FORS"]
+        det_aglae = ["X0", "X1", "X2", "X3", "X4", "X10", "X11","X12","X13","RBS","RBS150","RBS135","GAMMA","GAMMA70","GAMMA20","IBIL","FORS"]
         iba_para = False
-
-        for det1 in det_aglae:
-            if detname == det1:
-                iba_para = True
-
-
-
+   
         if destfile[1] == 'lst':
             newdestfile = destfile[0] + ".hdf5"
-      
-        newdestfile1 =  os.path.join(head_tail[0] , FinalHDF)
+
+
+        newdestfile1 =  os.path.join(head_tail[0], newdestfile)
 
         # print(newdestfile)
         try:
@@ -190,35 +200,26 @@ class AGLAEFile(object):
         except:
              f = h5py.File(newdestfile1, 'w')
         try:
-            del f["parametres"]
+            del f["Experimental parameters"]
         except:
             pass
         try:
             del f["stack/detector"]
         except:
             pass
-
+        iba_para = True
         if iba_para == True:
-            grp = f.create_group("parametres")
-            grp.attrs["Date"] = parametre[0]
-            grp.attrs["Projet"] = parametre[1]
-            grp.attrs["Objet"] = parametre[2]
-            grp.attrs["Particule"] = parametre[8]
-            grp.attrs["Beam energy"] = parametre[9]
-            grp.attrs["Map size X/Y (um)"] = '{} x {}'.format(parametre[3], parametre[4])
-            grp.attrs["Pixel size X/Y (um)"] = "{} x {} ".format(parametre[5], parametre[6])
-            grp.attrs["Pen size (um)"] = "{} ".format(parametre[7])
-            #(\u03BC) code mu
-            grp.attrs["Detector filter"] = "LE0:{}, HE1:{}, HE2:{}, HE3:{}, HE4:{}".format(parametre[10], parametre[11],
-                                                                                       parametre[12], parametre[13],
-                                                                                       parametre[14])
-            #print("HDF5 MetaData write")
+            grp = f.create_group("Experimental parameters")
+            root = f['/']
+            for exp_attr in dict_glob_metadata:
+                 grp.attrs[exp_attr] = dict_glob_metadata[exp_attr]
+                 root.attrs[exp_attr] = dict_glob_metadata[exp_attr]
+
         else:
-          #  grp1 = f.create_group("stack/detector")
-            #grp1.attrs["Data"] = "Test"
+        
             grp = f.create_group("parametres")
-            grp.attrs["Date"] = parametre[0]
-            grp.attrs["Objet"] = parametre[1]
+            grp.attrs["Date"] = "date"
+            grp.attrs["Objet"] = "obj"
 
         f.close()
 
@@ -254,18 +255,23 @@ class AGLAEFile(object):
         return FinalHDF
 
 
-     
     def open_header_lst(pathlst):
         import os
         # pathlst = "E:/21mai0106.lst"
         tmpheader = ""
         para2 = ""
         header1 = list()
-        sizeX = 1
-        sizeY = 1
+                
+        indexadc = -1
+        adc_readed = np.array([0,0,0,0,0,0,0,0,0,0,0,0],dtype=bool)
         head_tail = os.path.split(pathlst)  # Split le Path et le fichier
         root_text = os.path.splitext(head_tail[1])  # Split le fichier et ext
-
+        dict_adc_metadata_arr = np.full((20), {})
+        dict_metadata_global = {}
+        dict_metadata= {}
+        toto = []
+        end_adc = False
+                
         datainname = root_text[0].split("_")
         if len(datainname) > 4:
             dateacq = datainname[0]
@@ -276,52 +282,153 @@ class AGLAEFile(object):
             objetacq = "?"
             projetacq = "?"
 
-        header1.append(dateacq)
-        header1.append(objetacq)
-        header1.append(projetacq)
-        t =0    
-        with open(pathlst, "rb") as file_lst:
+        dict_metadata_global["obj"] = objetacq
+        dict_metadata_global["prj"] = projetacq
+        dict_metadata_global["filename"] = dateacq
+        t =0
+        det_aglae = ["X0", "X1", "X3", "X4", "X10", "X11", "X12", "X13", "RBS", "RBS150", "RBS135",
+                     "GAMMA", "GAMMA70", "GAMMA20", "IBIL", "FORS"]
+        
+        with open(pathlst, "r",errors='ignore') as file_lst:
             import os
             size_lst = os.path.getsize(pathlst)
             fin_header =False
-            while fin_header ==False: # != b'[LISTDATA]\r\n' or tmpheader != b'[LISTDATA]\n':
+            while fin_header ==False: 
                 tmpheader = file_lst.readline()
                 t+=1
-                if t == 615:
+                if t == 495:
                      t=t
                 else:
                     t=t           
                 # Map size:1280,1280,64,64,0,2564,100000_
-                if "Map size" in str(tmpheader):
-                    para = str.split(str(tmpheader), sep=':')
-                    para = str.split(para[1], sep=",")
-                    for newwpara in para:
-                        newwpara = newwpara.replace("\\n", '')
-                        newwpara = newwpara.replace("'", '')
-                        if len(header1) < 8:
-                            header1.append(newwpara)
-                        
+                if "[ORS" in str(tmpheader) or "[MAP" in str(tmpheader): # Fin lecture ADC
+                    end_adc = True
 
+
+                if "[ADC" in str(tmpheader): # Read metadata ADC1
+                   mynumero = re.search(r'\[ADC(\d+)\]', tmpheader) #re.search(r'[ADC(\d+)]', tmpheader) 
+                   indexadc = int(mynumero.group(1)) -1
+                   dict_metadata.clear() #dict_metadata_arr[indexadc]
+                   idx_metadata = 0
+                   adc_readed[indexadc] = 1
+            
+                if indexadc == 0 and "cmline0=" in str(tmpheader): # Nom detecteur
+                    para = str.split(str(tmpheader), sep='=')
+                    dict_metadata_global["date"]= AGLAEFile.clean_text(para[1])
+                
+                if "cmline1=" in str(tmpheader): # Nom detecteur
+                    para = str.split(str(tmpheader), sep='=')
+                    text_adc_name = AGLAEFile.clean_text(para[1])
+                    text_adc_name= text_adc_name.upper()
+                    if text_adc_name in det_aglae:
+                        dict_metadata["adc name"]= text_adc_name
+                    else:
+                        dict_metadata["adc name"]= "OFF"
+                    
+
+                    
+#cmline2= detector:SDD Ketek ,dia:50mm2 ,window:4um Be, S/N:xxxxx, Angle:50° 
+#cmline2= detector:pips ,dia:50mm2 ,window:4um Be, S/N:xxxxx, Angle:50° 
+
+                if "detector:" in str(tmpheader): # Info detecteur
+                    para = str.split(str(tmpheader), sep='=')
+                    para2 = str.split(para[1], sep=',') # 
+                    par_det= str.split(para2[0], sep=':')
+                    for i, text in enumerate(para2):
+                        text = AGLAEFile.clean_text(text)
+                        text2 = str.split(text, sep=':')[1]
+                        if "detector" in str(text): 
+                            dict_metadata["detector"] = str.split(text, sep=':')[1]
+                        if "active area" in str(text):
+                            dict_metadata["active area"]= str.split(text, sep=':')[1]
+                        if "thickness" in str(text):
+                            dict_metadata["thickness"] =str.split(text, sep=':')[1]
+                        if "window" in str(text):
+                            dict_metadata["window"] =str.split(text, sep=':')[1]
+                        if "angle"in str(text) :
+                            dict_metadata["angle"] =str.split(text, sep=':')[1]
+                        if  "S/N" in str(text): 
+                            dict_metadata["S/N"] =str.split(text, sep=':')[1]
+                
+                if "filter:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
+                    dict_metadata["filter"] =text
+                
+                if "calibration:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])
+                    dict_metadata["calibration"] = text
+
+                if "analyse description:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])
+                    dict_metadata_global["analyse description"] = text
+
+                if "ref analyse:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])  
+                    dict_metadata_global["ref analyse"] =text
+
+                if "username:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])  
+                    dict_metadata_global["username"] =text
+
+                if "prj euphrosyne:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])  
+                    dict_metadata_global["prj euphrosyne"] =text
+                
+                if "obj euphrosyne:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])  
+                    dict_metadata_global["obj euphrosyne"] =text
+                        
+                if "Map size:" in str(tmpheader):
+                    para2 = str.split(str(tmpheader), sep=':')
+                    para2 = str.split(para2[1], sep=",")
+                    map_info = ["map size x (um)","map size y (um)","pixel size x (um)","pixel size y (um)","pen size (um)","dose/column","dose" ]
+                    for i, text in enumerate(para2): 
+                        text = AGLAEFile.clean_text(text)
+                        para2[i] = text
+                        dict_metadata_global[map_info[i]] = text
+                        
+    #cmline7= calibration: MCA a= 1, MCA b= 1, MCA c= 0
+              
+                #cmline9= Exp.Info:Proton , 2976 keV        
                 if "Exp.Info" in str(tmpheader):
                     para2 = str.split(str(tmpheader), sep=':')
                     para2 = str.split(para2[1], sep=",")
+                    beam_info = ["particle", "beam energy"]
 
-                    for i, text in enumerate(para2):  # remplace le code \\xb5 mu par la lettre u pour um
-                        text = text.replace("\\xb5", 'u')
-                        text = text.replace("\\r\\n", '')
-                        text = text.replace("\\", 'jj')
-                        para2[i] = text
-                        header1.append(text)
-
-                    para = para + para2
-                fin_header = tmpheader == b'[LISTDATA]\r\n' or tmpheader == b'[LISTDATA]\n' or t > 5000
+                    for i, text in enumerate(para2): 
+                        text = AGLAEFile.clean_text(text)
+                        dict_metadata_global[beam_info[i]] = text
+                                     
+             
+                
+                if np.any(adc_readed) == True and end_adc == False:
+                    dict_adc_metadata_arr[indexadc] = dict_metadata.copy()
+                    
+                
+                #toto.append(dict_metadata.copy())
+                
+                fin_header = '[LISTDATA]' in str(tmpheader) or t > 5000
                 # header1.append(tmpheader)
-        if len(para2) == 0:
-            for i in range(7):
-                header1.append("?")
-
-        return header1
-
+        
+        return dict_adc_metadata_arr,dict_metadata_global
+    
+    def clean_text(text):
+        text = text.replace("\\xb5", 'u')
+        text = text.replace("\r\n", '')
+        text = text.replace('\n', '')
+        text = text.replace("\\", 'jj')
+        text = text.strip()
+                        
+        return text
+    
+   
     def return_adc_adjusted_index(data_array_previous,data_array):
 
         data_array = data_array[data_array != 65535]
@@ -337,25 +444,15 @@ class AGLAEFile(object):
         adjusted_indices = indices_32768 - one_array
         return adjusted_indices, data_array ,shape_data_array
 
-    def return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc):
+    def return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc,conditionXY):
         """ Retourne tout les indices des ADC dans DataArray"""
-        
-        # Op�rations bitwise et filtrage des indices
+                # Op�rations bitwise et filtrage des indices
         adc_masked = np.bitwise_and(adc_values[:], 0b0000000000000001 << num_line_adc)
-        coord_X_masket = np.bitwise_and(adc_values[:], 0b0000000000000001 << 8)
-        coord_Y_masket = np.bitwise_and(adc_values[:], 0b0000000000000001 << 9)
-        condition = (adc_masked != 0) # and coord_X_masket[:] != 0 and coord_Y_masket[:] != 0
-        conditionX = coord_X_masket[:] != 0
-        conditionY = coord_Y_masket[:] != 0
-        condition2 = np.logical_and(condition, conditionX)
-        condition_final = np.logical_and(condition2, conditionY)
-     #   filtered_indices = np.where(adc_masked[:] != 0 and coord_X_masket[:] != 0 and coord_Y_masket[:] != 0, adjusted_indices[:],
-       #                             np.full(len(adc_masked), -1, dtype=np.int16))
+        conditionADC = (adc_masked != 0) # and coord_X_masket[:] != 0 and coord_Y_masket[:] != 0
+        condition_final = np.logical_and(conditionADC, conditionXY)
         filtered_indices = np.where(condition_final, adjusted_indices[:],
                                      np.full(len(condition_final), -1, dtype=np.int16))
-        # filtered_indices = np.where(coord_Y_masket[:] != 0, adjusted_indices[:],
-        #                             np.full(len(coord_Y_masket), -1, dtype=np.int16))
-
+      
         non_zero_indices = filtered_indices[filtered_indices != -1]
         if len(non_zero_indices) < 10:
            return [-1]
@@ -363,8 +460,9 @@ class AGLAEFile(object):
         non_zero_indices = np.array(non_zero_indices)
         return non_zero_indices
 
-    def return_val_to_read(adc_words,non_zero_indices):
 
+
+    def return_val_to_read(adc_words,non_zero_indices):
         ind10 = []
         bit_count_array = np.empty(len(adc_words), dtype=np.uint32)
         qui_a_declanche = np.empty((12, len(adc_words)), dtype=np.uint32)
@@ -431,6 +529,7 @@ class AGLAEFile(object):
         
         return first_x_value, last_x_value
 
+   
     def read_range_x(coord_x,croissant):
         local_max_x = np.max(coord_x)
         last_pos_x = np.empty(0, dtype=np.uint16)
@@ -455,37 +554,36 @@ class AGLAEFile(object):
         
         count_x_min = np.bincount(first_pos_x)
         first_x = np.where(count_x_min == max(count_x_min))
-        try:
+        s1 = np.shape(first_x)
+        if len(s1) ==1: 
             first_x_value = int(first_x[0])
-        except:
+        if len(s1) ==2: 
             first_x_value = int(first_x[0][0]) # plusieurs valeur superieur X identique 
-
-        # if croissant == True:
-        #     last_x_value = last_x - 1  # int(last_x[0]) - 1
-        # else:
-        #     if last_x != 0:
-        #         last_x_value = first_x_value  # int(last_x[0]) + 1
-        #     else:
-        #         last_x_value = 0  # fin de la ligne de retour
 
         return first_x_value, last_x_value
 
-      
 
-    def read_indice_max_x(croissant,sizeX,coord_x,find_x):
- 
-            indice_x_max = np.where(coord_x == find_x)
+    def get_X_Y_condition(adc_values,ADC_X,ADC_Y):
+            coord_X_masket = np.bitwise_and(adc_values[:], 0b0000000000000001 << ADC_X)
+            coord_Y_masket = np.bitwise_and(adc_values[:], 0b0000000000000001 << ADC_Y)
+            conditionX = coord_X_masket[:] != 0
+            conditionY = coord_Y_masket[:] != 0
+            conditionXY = np.logical_and(conditionY, conditionX)
+            return conditionXY      
+
+    def read_indice_max_x(croissant,sizeX,coord_x,included_x):
+           
+            indice_x_max = np.where(coord_x == included_x)
             len_x_max = len(np.shape(indice_x_max[0]))
             if len_x_max < 1: #Pas ce X dans le Dataarray , faisceau OFF ?"
 
                 while len_x_max < 1:
                     if croissant == True:
-                        find_x -=1
+                        included_x -=1
                     else:
-                        find_x +=1
-                    indice_x_max = np.where(coord_x == find_x)
+                        included_x +=1
+                    indice_x_max = np.where(coord_x == included_x)
                     len_x_max = len(np.shape(indice_x_max[0]))    
-
 
             if croissant == True:
                 try:
@@ -494,12 +592,11 @@ class AGLAEFile(object):
                     indice_x_last = indice_x_max[-1]
             else:
                 try:
-                    indice_x_last = indice_x_max[0][0]
+                    indice_x_last = indice_x_max[0][-1]
                 except:
-                    indice_x_last = indice_x_max[0]
+                    indice_x_last = indice_x_max[-1]
            
             return indice_x_last
-
         
     
     def read_min_x(coord_x, croissant, previous_last_x):
@@ -514,8 +611,6 @@ class AGLAEFile(object):
             else:
                 last_pos_x = np.append(last_pos_x, coord_x[pos])  # A partir du d�but
                 first_pos_x = np.append(first_pos_x, coord_x[-pos-1])  # A partir de la fin
-
-
 
         last_pos_x = np.delete(last_pos_x, 0)
         count_x = np.bincount(last_pos_x)
@@ -542,32 +637,116 @@ class AGLAEFile(object):
         indice_last = indice_y_last[0][0] - 1
         return indice_last
 
-# Fonction d'extraction du fichier LST avec vectorisation
-    def extract_lst_vector(path_lst, para,ADC_X, ADC_Y):
+
+    def get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found):
+        """True si plusieurs column dans le Data array"""
+        if croissant== True:
+            if end_lst_file_found == False :
+                columns = included_x > first_x_value
+            else:
+                columns = included_x > first_x_value
+        
+        else:
+            if first_x_value < last_x_value :
+                if end_lst_file_found == False :
+                    columns = included_x < last_x_value
+                else:
+                    columns = included_x < last_x_value
+            else:
+                columns = False
+        return columns
+
+
+
+    def get_last_x_to_include(croissant,columns,last_x_value,first_x_value,change_line,fin_lst):
+        """Recupére Last X à inclure dans ce process"""
+        # if columns== False:
+        #     included_x = last_x_value
+        if columns==True and change_line==False and fin_lst==False:
+            if croissant== True:
+                included_x = last_x_value -1 #on va eclure le X-1
+            elif croissant== False:
+                included_x = first_x_value +1
+        else:
+            if croissant== True:
+                included_x = last_x_value
+            else:
+                included_x = first_x_value
+            
+        return included_x
+    
+
+    def clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x,croissant):
+        error_y =False
+        max_size_x = ret_range_bytes(sizeX - 1)
+        max_size_y = ret_range_bytes(sizeY - 1)
+        coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
+        c1 = coord_y
+        c1 = c1[c1 != 0]
+        
+        if len(c1) < 100:
+            error_y = True
+        coord_y = coord_y & max_size_y 
+
+        # Met des -1 aux coord X et Y > valeur de la carto
+        val_out_range_x = np.where(coord_x > sizeX - 1)
+        coord_x = np.delete(coord_x, val_out_range_x)
+        coord_y = np.delete(coord_y, val_out_range_x)
+        if b_previous_find_x == True:
+            val_out_range_x = np.where(coord_x == previous_find_x)
+            coord_x = np.delete(coord_x, val_out_range_x)
+            coord_y = np.delete(coord_y, val_out_range_x)
+  
+        return coord_x,coord_y,error_y
+    
+
+
+
+    def extract_lst_vector(path_lst, dict_para_global,_dict_adc_metadata_arr):
         pathlst1 = path_lst
+        _dict_channel_adc,_dict_config_mpawin_adc,_dict_combined_adc = read_cfg_adc()
+        print(_dict_channel_adc)
+       
+        
+        #array_adc = [0,2,3,4,6,7,10,11]
+        array_adc = []
+        for key,value in _dict_config_mpawin_adc.items():
+               if str.upper(value) == "COORD_X":
+                   ADC_X= int(key)
+               elif str.upper(value) == "COORD_Y": 
+                   ADC_Y= int(key)
+               elif str.upper(value) != "OFF":
+                   array_adc.append(int(key))
+               
         tmpheader = ""
         header1 = list()
         sizeX = 1
         sizeY = 1
         #print(path_lst)
-        print("map size = ",para[3], para[4])
-        sizeX = int(para[3]) / int(para[5])
-        sizeY = int(para[4]) / int(para[6])
+        print("map size = ",dict_para_global['map size x (um)'], dict_para_global['map size y (um)'])
+        
+        sizeX = int(dict_para_global['map size x (um)']) / int(dict_para_global['pixel size x (um)'])
+        sizeY = int(dict_para_global['map size y (um)']) / int(dict_para_global['pixel size y (um)'])
         sizeX = int(sizeX)
         sizeY = int(sizeY)
         adcnum = []
+        
 
         nbcanaux = 1024
-        nbcanaux_pixe = 2048
-        nbcanaux_gamma = 2048
-        nbcanaux_rbs = 512
-        
+        nbcanaux_pixe = int(_dict_channel_adc['pixe'])
+        nbcanaux_gamma20 = int(_dict_channel_adc['gamma20'])
+        nbcanaux_gamma70 = int(_dict_channel_adc['gamma70'])
+        nbcanaux_rbs = int(_dict_channel_adc['rbs'])
+        cube = np.zeros((sizeX, sizeY, nbcanaux), 'u4')
+        # for i in range (0,50):
+
         file = open(path_lst, 'rb')
         size_lst = getSize(file)
         file.close()
         allheader = ""
         fin_header = False
         t=0
+        error_in_lst_file = False
         with open(path_lst, "rb") as file_lst:  # Trop long
             while fin_header == False: #tmpheader != b'[LISTDATA]\r\n':
                 tmpheader = file_lst.readline()
@@ -577,36 +756,35 @@ class AGLAEFile(object):
                 size_lst -= len(tmp1) - 2
                 if "condition" in str(tmpheader):
                     toto = 1
-                fin_header = tmpheader == b'[LISTDATA]\r\n' or tmpheader == b'[LISTDATA]\n' or t > 5000
               
-            pensize = int(para[7])
-            nb_pass_y = int(sizeY / (pensize / int(para[6])))
-            nb_column_total = sizeX*nb_pass_y
-           
-                 # Pas possible gros LST
-      
-            range_very_small = 3*10 ** 6 # 3Mo
-            range_small = 10*10 ** 6  # range(1, 10**6) #50 Mo
-            range_50mega = 50*10 ** 6  # #100 Mo
-            range_100mega = 100*10 ** 6  # #100 Mo
-            range_300mega = 300*10 ** 6  # #100 Mo
-            range_500mega = 500*10 ** 6  # #100 Mo
-
-            
-            range_giga = 1000 *10** 6  # range(10**7 + 1, 1**12)  # 100 Mo
-            size_lst = int(size_lst / 2)  # car on lit des Uint16 donc 2 fois moins que le nombre de bytes (Uint8)
-            size_block = size_lst
-            size_one_scan = size_lst / nb_pass_y
-            size_4_column_scan = size_one_scan / (sizeX/4)  # taille 4 column
-            if size_4_column_scan < 10*10**6 and sizeX > 20:
-                size_4_column_scan = size_one_scan / (sizeX/8) # taille 8 column 
-            size_block = int(size_4_column_scan)
+                fin_header = tmpheader == b'[LISTDATA]\r\n' or tmpheader == b'[LISTDATA]\n' or t > 5000
+                # header1.append(tmpheader)
 
         
+           
+            pensize = int(dict_para_global["pen size (um)"])
+            nb_pass_y = int(sizeY / (pensize / int(dict_para_global["pixel size y (um)"])))
+            nb_column_total = sizeX*nb_pass_y
+           
+        
+   
+            size_lst = int(size_lst)  # car on lit des Uint16 donc 2 fois moins que le nombre de bytes (Uint8)
+            size_block = size_lst
+            size_one_scan = size_lst / nb_pass_y
+            size_4_column_scan = (size_one_scan / (sizeX)) * 4 #/(sizeX/40))  # taille 4 column
+            # if size_4_column_scan < 10*10**6 and sizeX > 20:
+            #     size_4_column_scan = size_one_scan / (sizeX/8) # taille 8 column 
+            size_block = int(size_4_column_scan)
+            size_block_big = int(size_4_column_scan) * 4
+            large_map = False
+
+            if size_lst > 1000000 and sizeX > 40:
+                large_map = True
+       
             
             if nb_pass_y == 1 and size_lst < 50*10**6: 
                 size_block = size_lst
-          
+            # size_block = 100000
             nb_read_total = 0
             
             
@@ -630,14 +808,18 @@ class AGLAEFile(object):
             end_lst_file_found = False
             last_x_maps = 0
             columns = True
-
+            nb_adc_not_found = 0
+            
             if nb_pass_y % 2 == 0:
                 last_x_maps = 0
             else:
                 last_x_maps = sizeX - 1
 
             for num_pass_y in range(nb_pass_y):
+                print(num_pass_y ,"//",nb_pass_y)
 
+                if end_lst_file_found==True: # fin LST avant fin de la taille de la carto (ABORT sur New Orion)
+                    break   
                 if (num_pass_y % 2 == 0):
                     croissant = True
                     next_x_value = np.zeros(12, dtype=np.uint16)
@@ -651,12 +833,16 @@ class AGLAEFile(object):
                 y_max_current_scan = y_scan + (num_pass_y * nb_column)
 
                 cube_one_pass_pixe = np.empty((5, nb_column, sizeX, nbcanaux_pixe), dtype=np.uint32)
-                cube_one_pass_gamma = np.empty((2, nb_column, sizeX, nbcanaux_gamma), dtype=np.uint32)
+                cube_one_pass_gamma20 = np.empty((1, nb_column, sizeX, nbcanaux_gamma20), dtype=np.uint32)
+                cube_one_pass_gamma70 = np.empty((1, nb_column, sizeX, nbcanaux_gamma70), dtype=np.uint32)
                 cube_one_pass_rbs = np.empty((3, nb_column, sizeX, nbcanaux_rbs), dtype=np.uint32)
 
                 fin_ligne = False
                 change_line= False
-
+                zero_off = False
+                previous_find_x = 0
+                b_previous_find_x = False
+                    
                 while (fin_ligne == False and end_lst_file_found == False):  # max_val_y_lue <= y_scan): # or croissa nte == False ):
 
                     adc2read = 0
@@ -664,135 +850,149 @@ class AGLAEFile(object):
                     data_array = np.empty(0, dtype=np.uint16)
                     adjusted_indices = np.empty(0, dtype=np.uint16)
                     adjusted_indices_previous = np.empty(0, dtype=np.uint16)
+                    # if large_map == True:
+                    #     if croissant == True:
+                    #         if previous_find_x < sizeX -20 :
+                    #             nb_byte_to_read = size_block_big
+                    #         else:
+                    #             nb_byte_to_read = size_block
+
+                    #     if croissant == False: 
+                    #         if previous_find_x >20 or previous_find_x==0:
+                    #             nb_byte_to_read = size_block_big
+                    #         else:
+                    nb_byte_to_read = size_block
+                                
 
                     min_last_pos_x_y_in_array = 0 #nb_byte_to_read
                     data_array = np.fromfile(file_lst, dtype=np.uint16, count=int(nb_byte_to_read))
+        
                     if len(data_array) < nb_byte_to_read:
                         end_lst_file_found = True
                         print("End LST file found")
+                    
 
-                    adjusted_indices,data_array ,shape_data_array = AGLAEFile.return_adc_adjusted_index (data_array_previous, data_array)
+                    adjusted_indices, data_array ,shape_data_array = AGLAEFile.return_adc_adjusted_index (data_array_previous, data_array)
                     adc_values = np.array(data_array[adjusted_indices])
-
+                    if len(data_array) < 1 : 
+                        exit 
 
                     nb_read_total += (nb_byte_to_read * 2) + len(data_array_previous)
                     t1 = perf_counter()
 
-                    array_adc = [0,1,2,3,4,6,7,10,11]
+                    
                     #array_adc = [0,4]
+                    max_size_x = ret_range_bytes(sizeX - 1)
+                    max_size_y = ret_range_bytes(sizeY - 1)
+                    conditionXY= AGLAEFile.get_X_Y_condition(adc_values,ADC_X,ADC_Y)
+                    nb_adc_not_found = 0
+                    last_indx_x = 0
+                   
                     for num_line_adc in array_adc: #range(12):
-                        print(num_line_adc)
-                        if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 5: continue
+                        sleep(0.002)
+                        if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 55: continue
 
                         switcher = {5: nbcanaux_pixe, 0: nbcanaux_pixe, 1: nbcanaux_pixe, 2: nbcanaux_pixe, 3: nbcanaux_pixe, 4: nbcanaux_pixe, 80: nbcanaux_pixe, 81: nbcanaux_pixe,
-                                    82: nbcanaux_pixe, 6: nbcanaux_rbs, 7: nbcanaux_rbs, 10: nbcanaux_gamma, 11: nbcanaux_gamma}
-                        nbcanaux = switcher.get(num_line_adc)
+                                    82: nbcanaux_pixe, 6: nbcanaux_rbs, 7: nbcanaux_rbs, 10: nbcanaux_gamma20, 11: nbcanaux_gamma70}
 
+                        nbcanaux = switcher.get(num_line_adc)
                         detector = ret_adc_name(num_line_adc)
                         adc2read = num_line_adc + 1
                         # adc2read = ret_num_adc(self.detector)
                         t0 = perf_counter()
                         # Return 
-                        non_zero_indices = AGLAEFile.return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc)
-                        if non_zero_indices[0] == -1:
+                        non_zero_indices = AGLAEFile.return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc,conditionXY)
+                        if non_zero_indices[0] == -1 or len(non_zero_indices) < 50:
+                            nb_adc_not_found +=1
                             continue
                         adc_words = data_array[non_zero_indices]
                         indice_val_to_read = AGLAEFile.return_val_to_read(adc_words,non_zero_indices)
 
-                        max_size_x = ret_range_bytes(sizeX - 1)
-                        max_size_y = ret_range_bytes(sizeY - 1)
                         coord_x = data_array[indice_val_to_read[ADC_X, :]]  
-                        coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
-                        coord_y = data_array[indice_val_to_read[ADC_Y, :]]  
-                        c1 = indice_val_to_read[9, :]
-                        c1 = c1[c1 != 0]
-                        
-                        if len(c1) < 100:
-                            continue
-                        coord_y = coord_y & max_size_y 
+                        #coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
+                        coord_y = data_array[indice_val_to_read[ADC_Y, :]] 
+                     
+                        # if croissant == False:
+                        #      coord_x = np.flip(coord_x)
+                        #      coord_y = np.flip(coord_y)
+                             
+                        #if end_lst_file_found == False :
+                        coord_x, coord_y ,error= AGLAEFile.clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x,croissant) # del 
+                                             
+                        if coord_x[0] !=0: 
+                            x_zero_error = np.where(coord_x ==0) # Recherche si des X=0  présents dans X !=0
+                        else:
+                            x_zero_error = np.zeros((1, 1), dtype=np.uint32)
 
-                        # Met des -1 aux coord X et Y > valeur de la carto
-                        out_range_x = np.where(coord_x > sizeX - 1)
-                        coord_x = np.delete(coord_x, out_range_x)
-                        coord_y = np.delete(coord_y, out_range_x)
-                        coord_x = np.where(coord_x <= sizeX - 1, coord_x, np.full(len(coord_x), 0))
-                        coord_y = np.where(coord_y <= sizeY - 1, coord_y, np.full(len(coord_y), 0))
-                    
                         max_val_y_lue,min_val_y_lue = AGLAEFile.read_min_max_y(coord_y)
-                        #first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
-                        first_x_value, last_x_value = AGLAEFile.range_x(coord_x, croissant)
+                        first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+                        #first_x_value, last_x_value = AGLAEFile.range_x(coord_x, croissant)
+                      
+                        if first_x_value !=0 and len(x_zero_error[0]) > 1: #coord_X =0 anormal
+                            coord_x = np.delete(coord_x, x_zero_error)
+                            coord_y = np.delete(coord_y, x_zero_error)
+                            first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+                                
 
-                        
                         change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
-                        val_x_fin_map = get_x_end_line_scan(croissant,sizeX) # retourne val 
+                        val_x_fin_map = get_x_end_line_scan(croissant,sizeX) # retourne val final 0 ou SizeX-1
                         
                         if change_line == False:
                             fin_lst = look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,last_x_value)
                         else:
-                            fin_lst = False
-                        
-                        find_x = get_x_to_exclude(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                            fin_lst = False # change line -> fin lst impossible
+
                        
-                        if change_line==True or fin_lst== True or end_lst_file_found == True: # Cas changement ligne ou fin fichier LST
-                            if end_lst_file_found == True:
-                                toto=1
-                            
-                            if last_x_value < first_x_value and croissant==True:
-                                last_x_value = sizeX-1
-                            
-                            if fin_lst==False and end_lst_file_found == False:
+                       # Dertermine la dernière valeur X
+                        included_x = AGLAEFile.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                        columns= AGLAEFile.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                        included_x = AGLAEFile.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                                                   
+                        if last_x_value < first_x_value and croissant==True: # Cas trop lus de columns
+                            last_x_value = sizeX-1
+                            columns= AGLAEFile.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                        
+                        if first_x_value > last_x_value and croissant==False: # Cas trop lus de columns
+                            first_x_value = 0
+                            columns= AGLAEFile.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+           
+                       
+                        if end_lst_file_found == True or fin_lst == True:
+                                 indice_last = len(coord_y) -1
+                        else:
+                            if columns == True and change_line == False: # plus de 1 colonne
+                                indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
+                            elif columns == False and change_line == False: # 1 Colonne
+                                indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
+                            elif change_line == True:
                                 indice_last = AGLAEFile.read_max_indice_change_colonne(coord_y,y_max_current_scan) #Recherche last_indice avec Y < scan total
-                            elif end_lst_file_found == True or fin_lst == True:
-                                indice_last = len(coord_y) -1
-
-                            fin_ligne = True
-                            if num_line_adc== 0 :
-                                if croissant==True:
-                                    print("X:", last_x_value,end=",")
-                                else:
-                                    print("X:",first_x_value,end=",")
-
-                            coord_x = coord_x[:indice_last]
-                            coord_y = coord_y[:indice_last]
-                            max_data_array = indice_val_to_read[ADC_X, indice_last]
-
-                            if max_data_array > min_last_pos_x_y_in_array:
-                                  min_last_pos_x_y_in_array = max_data_array
-
-                        else:  # recherche la dernire valeur de X
-                            columns= get_colums_range(croissant,first_x_value,last_x_value)
-                            if end_lst_file_found == False:
-                                columns= get_colums_range(croissant,first_x_value,last_x_value)
-                                if columns == True: # plus de 1 colonne
-                                    indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,find_x)#,next_x_value[num_line_adc])
-                                else:
-                                    find_x = first_x_value
-                                    indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,find_x)#,next_x_value[num_line_adc])
-                            
-                                
-                                if num_line_adc== 0 :
-                                    print("X:", last_x_value,end=",")
-                                
-                                max_data_array = indice_val_to_read[ADC_X, indice_last]
-                                coord_x = coord_x[:indice_last]
-                                coord_y = coord_y[:indice_last]
-
-
-                                if max_data_array > min_last_pos_x_y_in_array:
-                                        min_last_pos_x_y_in_array = max_data_array
-
-                            else: # Fin du fichier on mets les bornes max pour X
-                                if num_line_adc== 0 :
-                                    print("X:", last_x_value,end=",")
                                 if croissant == True:
-                                    first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+                                    included_x = sizeX-1
                                 else:
-                                    last_x_value = 0
+                                    included_x = 0     
+                                fin_ligne = True
+                           
+                       
+                        if num_line_adc== 0 :
+                          if croissant == True:
+                              print("X:", first_x_value,"To",included_x,end=",")
+                              sleep(0.02)
+                              
+                          else:
+                              print("X:", last_x_value,"To",included_x,end=",")
+                              sleep(0.02)
+                              if included_x == 25:
+                                  included_x = 25
+                        
+                        max_data_array = indice_val_to_read[ADC_X, indice_last]
+                        coord_x = coord_x[:indice_last]
+                        coord_y = coord_y[:indice_last]
 
 
-                            indice_x_last = len(coord_x)
+                        if max_data_array > min_last_pos_x_y_in_array:
+                                min_last_pos_x_y_in_array = max_data_array
 
-
+                 
                         non_zero_indices = np.nonzero(indice_val_to_read[num_line_adc, :indice_last])
                         if len(non_zero_indices[0]) < 2:  # pas de valeur pour cet adc dans ce Block de Data Array
                             continue
@@ -806,18 +1006,21 @@ class AGLAEFile(object):
                         new_coord_y = coord_y [non_zero_indices]
 
                         #if (croissant == True and last_x_value==sizeX-1) or (croissant == False and last_x_value == 0):
-                        if (croissant == True and find_x==sizeX-1) or (croissant == False and find_x == 0):
+                        if (croissant == True and included_x==sizeX-1) or (croissant == False and included_x == 0):
                             fin_ligne = True
-                        
-                       
-                        p1 = first_x_value
-                        
-                        if last_x_value == sizeX-1:
+                                                                      
+                        if croissant == True and end_lst_file_found == True: # Si carto stopper avant fin de la ligne
                             p2 = last_x_value # Je prend la dernier column en compte dans mon histogramme
+                            p1 = first_x_value
+                        if croissant == False and end_lst_file_found == True: # Si carto stopper avant fin de la ligne
+                            p2 = first_x_value # Je prend la dernier column en compte dans mon histogramme
+                            p1 = last_x_value
                         elif croissant == False:
                             p2 = last_x_value
-                        else:
-                            p2 = last_x_value -1
+                            p1 = included_x
+                        elif croissant == True:
+                            p2 = included_x #last_x_value -1
+                            p1 = first_x_value
 
                        
                         if croissant == True:
@@ -825,17 +1028,17 @@ class AGLAEFile(object):
                             del adc1
                          
                             if columns == False:
-                                # range_histo = 1first_x_value == last_x_value - 1 and fin_ligne == False: # Une seule column dans le dataArray
                                 range_histo = 1
                             else:
                                 r1 = [p1, p2]
                                 range_histo = (p2 - p1) + 1
 
+
                         else:
                             new_coord_x = np.delete(new_coord_x, 0)
-                            new_coord_x = np.flip(new_coord_x)
+                            #new_coord_x = np.flip(new_coord_x)
                             new_coord_y = np.delete(new_coord_y, 0)
-                            new_coord_y = np.flip(new_coord_y)
+                            #new_coord_y = np.flip(new_coord_y)
                             adc2 = np.delete(adc1[0], 0)
                             adc3 = np.flip(adc2)
                             del adc1
@@ -847,7 +1050,9 @@ class AGLAEFile(object):
                                 range_histo = (p2 - p1) + 1
                             else:
                                 range_histo = 1
-                       
+                        
+                        if range_histo < 0:
+                            print('error range_histo') 
                         if range_histo==1:
                            H1, xedges, yedges= np.histogram2d(new_coord_y,adc3,bins=(nb_column,nbcanaux),range= ({0, nb_column-1},{0, nbcanaux-1}))
                         
@@ -859,59 +1064,87 @@ class AGLAEFile(object):
                     
                        
                         if croissant == True:
-                            if last_x_value == sizeX-1:
-                                last_x_value = last_x_value +1 # Incrément de 1 pour la derniere column car H1 a une dimension +1
+                            ind_1 = first_x_value
+                            ind_2 = included_x + 1 # Numpy array exclu le dernier indice
                         else:
-                            last_x_value = last_x_value +1
+                            ind_1 = included_x 
+                            ind_2 =  last_x_value + 1 # Numpy array exclu le dernier indice
 
 
+                        if first_x_value == 0:
+                            first_x_value=0
                         if num_line_adc <=4:
                             if range_histo == 1:
-                                cube_one_pass_pixe[num_line_adc ,:, first_x_value, :] = H1
+                                cube_one_pass_pixe[num_line_adc][:, ind_1, :] = H1
                             else:
-                                cube_one_pass_pixe[num_line_adc][0:,first_x_value:last_x_value, 0:] = H1
+                                cube_one_pass_pixe[num_line_adc][0:,ind_1:ind_2, 0:] = H1
 
-                        elif num_line_adc == 6 or  num_line_adc == 7:
+                        elif num_line_adc == 5 or num_line_adc == 6 or  num_line_adc == 7:
                             if range_histo == 1:
-                                cube_one_pass_rbs[num_line_adc - 6][0:, int(next_x_value[num_line_adc]),0:] = H1
+                                cube_one_pass_rbs[num_line_adc - 5][:, ind_1, :] = H1
                             else:
-                                cube_one_pass_rbs[num_line_adc - 6][0:,first_x_value:last_x_value, 0:] = H1
+                                cube_one_pass_rbs[num_line_adc - 5][0:,ind_1:ind_2, 0:] = H1
 
-                        elif num_line_adc == 10 or num_line_adc == 11:
+
+                        elif num_line_adc == 10:
                             if range_histo == 1:
-                                cube_one_pass_gamma[num_line_adc - 10][0:, int(next_x_value[num_line_adc]),0:] = H1
-                            else:
-                                cube_one_pass_gamma[num_line_adc - 10][0:,first_x_value:last_x_value, 0:] = H1
 
+                                cube_one_pass_gamma20[0][0:, int(next_x_value[num_line_adc]),0:] = H1
+                            else:
+                                cube_one_pass_gamma20[0][0:,first_x_value:last_x_value, 0:] = H1
+
+                        elif num_line_adc == 11:
+                            if range_histo == 1:
+                                cube_one_pass_gamma70[0][0:, first_x_value,0:] = H1
+                            else:
+                                cube_one_pass_gamma70[0][0:,first_x_value:last_x_value, 0:] = H1
                     
+
                         if range_histo != 1 and croissant == True:
                             next_x_value[num_line_adc] = last_x_value
                         else:
                             next_x_value[num_line_adc] = first_x_value
                         
+                    if nb_adc_not_found < 9:
+                        if first_x_value ==0 and croissant == True:
+                            zero_off = True     
+                    
 
-                    if min_last_pos_x_y_in_array < int(shape_data_array):
-                        data_array_previous = []
-                        data_array_previous = data_array[min_last_pos_x_y_in_array+5:]
-                        adjusted_indices_previous = adjusted_indices
+                        if min_last_pos_x_y_in_array < int(shape_data_array):
+                            data_array_previous = []
+                            data_array_previous = data_array[min_last_pos_x_y_in_array+20:]
+                            adjusted_indices_previous = adjusted_indices
+                            b_previous_find_x = True
+                            previous_find_x = included_x
+                    else:
+                        end_lst_file_found = True
+
+                    if len(data_array_previous) <1:
+                        end_lst_file_found = True
 
                 # data_array_previous = np.empty(0, dtype=np.uint16)
-                for num_line_adc in range(12):
-                    if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 5: continue
-                    adc2read = num_line_adc + 1
-                    detector = ret_adc_name(num_line_adc)
-                    if num_line_adc <= 4 :
-                        data = cube_one_pass_pixe[num_line_adc]
-                    elif num_line_adc == 6 or num_line_adc == 7:
-                        data = cube_one_pass_rbs[num_line_adc-6]
-                    elif num_line_adc == 10 or num_line_adc == 11:
-                        data = cube_one_pass_gamma[num_line_adc-10]
+                if nb_adc_not_found < 9: # RBS, RBS135, RBS150, Gamma20 et Gamma70 peuvent être éteins
+                    for num_line_adc in array_adc:
+                        if num_line_adc == 1 or num_line_adc == ADC_X or num_line_adc == ADC_Y or num_line_adc == 55: continue
+                        adc2read = num_line_adc + 1
+                        detector = ret_adc_name(num_line_adc)
+                        if num_line_adc <= 4 :
+                            data = cube_one_pass_pixe[num_line_adc]
+                        elif num_line_adc == 5 or num_line_adc == 6 or num_line_adc == 7:
+                            data = cube_one_pass_rbs[num_line_adc-5]
+                        elif num_line_adc == 10:
+                             data = cube_one_pass_gamma20[0]
+                        elif num_line_adc == 11:
+                            data = cube_one_pass_gamma70[0]
 
-                    #AGLAEFile.feed_hdf5_map(data, path_lst, detector, "FinalHDF", adc2read, sizeX, sizeY,nbcanaux,num_pass_y)
-                    AGLAEFile.feed_hdf5_map(data, path_lst, detector, num_pass_y)
+               
+                        AGLAEFile.feed_hdf5_map(data, path_lst, detector, num_pass_y,_dict_adc_metadata_arr[num_line_adc])
+                        
+                    AGLAEFile.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,_dict_adc_metadata_arr)
+                
 
-                AGLAEFile.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y)
                 print("\n")
+
 
 
 def getSize(fileobject):
@@ -919,10 +1152,9 @@ def getSize(fileobject):
     size = fileobject.tell()
     return size
 
+
 def get_x_to_exclude(croissant,columns,last_x_value,first_x_value,change_line,fin_lst):
     """Recupére X pour exclure dans ce process"""
-    # if columns== False:
-    #     find_x = last_x_value
     if columns==True and change_line==False and fin_lst==False:
         if croissant== True:
             find_x = last_x_value -1 #on va eclure le X-1
@@ -935,23 +1167,6 @@ def get_x_to_exclude(croissant,columns,last_x_value,first_x_value,change_line,fi
             find_x = first_x_value
         
     return find_x
-
-def get_colums_range(croissant,first_x_value,last_x_value):
-    """True si plusieurs column dans le Data array"""
-    if croissant== True:
-        columns = last_x_value -1 > first_x_value
-        # find_x = last_x_value
-        # if columns==True: find_x -=1 # recherche X -1
-    else:
-        if first_x_value < last_x_value :
-            columns = first_x_value + 1 < last_x_value
-        else:
-            columns = False
-        # find_x = first_x_value
-        
-        # if columns==True: 
-        #         first_x_value +=1
-    return columns
 
 def get_x_end_line_scan(croissant,sizex):
     """Get le X max du scan suivant ligne pair/impaire"""
@@ -978,29 +1193,8 @@ def look_if_next_line(max_val_y_lue,y_scan_total):
         change_line =False
 
     return change_line
-    # if last_x_value == 0:
-    #             last_x_value = last_x_value
-    
-    # if croissant==True: # Donne dernière valeur X du Dataset 
-    #     val_x_fin_map = last_x_value
-    #     val_fin_x = sizeX -1
-    # else:
-    #     if max_val_y_lue > y_scan_total and first_x_value > last_x_value: # Contient X du prochaine scan
-    #         val_x_fin_map = 0
-    #         val_fin_x = 0    
-    #     else:
-    #         val_x_fin_map = first_x_value
-    #         val_fin_x = 0
-    
-    
-
-    # if max_val_y_lue > y_scan_total: # Changement de ligne de scan
-    #     if val_x_fin_map == val_fin_x or (first_x_value > last_x_value and croissant==True) or (first_x_value > last_x_value and croissant==True): # Le dataset contient une partie du la ligne de retour -> 
-    #         change_line= True
-    # else:
-    #     change_line= False
-
-                            
+   
+          
 def ret_num_adc(detector):
    switcher = {
                 "LE0":  0b0000000000010000, #2A
@@ -1099,48 +1293,78 @@ class HDF5Store(object):
 # RBS = 512
 # GAMMA20 = 2048
 # GAMMA70 = 4096
+def ascii_spectra_to_hdf5(_path_ascii,_type_analyse):
+     with open(_path_ascii) as File_Spectre:
+            header1 = File_Spectre.readline()
+            header1 = File_Spectre.readline()
+            data_spectre = File_Spectre.readlines()
 
-def read_cfg_adc():
-    config = configparser.ConfigParser()
-    config.read('config_adc.ini')
-    config.sections()
-      
-    nb_channels_pixe = config.getint('NB_CHANNEL', 'PIXE')
-    nb_channels_rbs = config.getint('NB_CHANNEL', 'RBS')
-    nb_channels_gamma20 = config.getint('NB_CHANNEL', 'GAMMA20')
-    nb_channels_gamma70 = config.getint('NB_CHANNEL', 'GAMMA70')
+
+
+
+def read_cfg_adc(path=None):
+        if not path: path = 'config_lst2hdf5.ini'
+        config = configparser.ConfigParser()
+        config.read(path)
+        config.sections()
+        dict_config_mpawin_adc = {}
+        dict_channel_adc ={}
+        dict_combined_adc ={}
+                
+        nb_channels_pixe = config.getint('NB_CHANNEL', 'PIXE')
+        nb_channels_rbs = config.getint('NB_CHANNEL', 'RBS')
+        nb_channels_gamma20 = config.getint('NB_CHANNEL', 'GAMMA20')
+        nb_channels_gamma70 = config.getint('NB_CHANNEL', 'GAMMA70')
+
+        section_name = 'NB_CHANNEL'
+        for key, value in config[section_name].items():
+            print(f"{key}: {value}")
+            dict_channel_adc[key] = value
+        # Lecture des valeurs de la section MPAWIN
+        
+        section_name = 'CFG_MPAWIN'
+        for key, value in config[section_name].items():
+            print(f"{key}: {value}")
+            dict_config_mpawin_adc[key] = value
+        
+        section_name = 'CFG_CONBINED'
+        for key, value in config[section_name].items():
+            print(f"{key}: {value}")
+            dict_combined_adc['combined' + key] = value
+            
+        return dict_channel_adc,dict_config_mpawin_adc,dict_combined_adc
+
     
-    section_name = 'NB_CHANNEL'
-
-    for key, value in config[section_name].items():
-        print(f"{key}: {value}")
-    
-    # Lecture des valeurs de la section MPAWIN
-    section_name = 'CFG_MPAWIN'
-
-    for key, value in config[section_name].items():
-        print(f"{key}: {value}")
-    
-    section_name = 'CFG_CONBINED'
-
-    for key, value in config[section_name].items():
-        print(f"{key}: {value}")
-    
-
 
 def main():
     print("hello")
-    read_cfg_adc()
+    _path_lst = ""
+    _fnct = "maps"
     if len(sys.argv) < 2:
         print("Usage: script.py <arg1> <arg2> ...")
-        return
+        _path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
+        _fnct = "maps"
+        _type_analyse = ""
+    else:
+        _path_lst = lst_arg[1] 
+        _fnct = lst_arg[2]
+        _type_analyse = lst_arg[3]
+
+        #return
 
     for arg in sys.argv[1:]:
         print(f"Argument: {arg}")
-   
-    _map_parameter = AGLAEFile.open_header_lst(lst_arg[1])
-    print(_map_parameter)
-    AGLAEFile.extract_lst_vector(lst_arg[1],_map_parameter,ADC_X = 8, ADC_Y = 9,)
+
+    if _fnct== "maps":
+        _dict_adc_metadata_arr,_dict_metadata_global = AGLAEFile.open_header_lst(_path_lst)
+        
+        #_config_adc = read_cfg_adc()
+    
+        AGLAEFile.extract_lst_vector(_path_lst,_dict_metadata_global,_dict_adc_metadata_arr)
+        AGLAEFile.write_hdf5_metadata(_path_lst,_dict_metadata_global)
+    elif _fnct == "spectra":
+        ascii_spectra_to_hdf5("c:_path_ascii,_type_analyse")
+    
 
 if __name__ == "__main__":
    lst_arg = sys.argv
@@ -1150,3 +1374,398 @@ if __name__ == "__main__":
 #         AGLAEFile.extract_lst_vector(lst_arg[1],map_parameter,ADC_X = 8, ADC_Y = 9,)
 
 
+
+# Fonction d'extraction du fichier LST avec vectorisation
+    # def extract_lst_vector(config_adc,path_lst, para_global,_dict_adc_metadata_arr):
+    #     pathlst1 = path_lst
+    #     dict_config_adc = config_adc
+    #     for key,value in dict_config_adc.items():
+    #            if str.upper(value) == "COORD_X":
+    #                ADC_X= int(key)
+    #            if str.upper(value) == "COORD_Y": 
+    #                ADC_Y= int(key)
+               
+    #     tmpheader = ""
+    #     header1 = list()
+    #     sizeX = 1
+    #     sizeY = 1
+    #     #print(path_lst)
+    #     print("map size = ",para_global['map size x (um)'], para_global['map size y (um)'])
+        
+    #     sizeX = int(para_global['map size x (um)']) / int(para_global['pixel size x (um)'])
+    #     sizeY = int(para_global['map size y (um)']) / int(para_global['pixel size y (um)'])
+    #     sizeX = int(sizeX)
+    #     sizeY = int(sizeY)
+    #     adcnum = []
+        
+
+    #     nbcanaux = 1024
+    #     nbcanaux_pixe = int(dict_config_adc['pixe'])
+    #     nbcanaux_gamma20 = int(dict_config_adc['gamma20'])
+    #     nbcanaux_gamma70 = int(dict_config_adc['gamma70'])
+    #     nbcanaux_rbs = int(dict_config_adc['rbs'])
+        
+    #     file = open(path_lst, 'rb')
+    #     size_lst = getSize(file)
+    #     file.close()
+    #     allheader = ""
+    #     fin_header = False
+    #     t=0
+    #     with open(path_lst, "rb") as file_lst:  # Trop long
+    #         while fin_header == False: #tmpheader != b'[LISTDATA]\r\n':
+    #             tmpheader = file_lst.readline()
+    #             tmp1 = str(tmpheader)
+    #             allheader = allheader + tmp1.replace("\\r\\n", '')
+    #             t+=1    
+    #             size_lst -= len(tmp1) - 2
+    #             if "condition" in str(tmpheader):
+    #                 toto = 1
+    #             fin_header = tmpheader == b'[LISTDATA]\r\n' or tmpheader == b'[LISTDATA]\n' or t > 5000
+              
+    #         pensize = int(para_global['pen size (um)'])
+    #         nb_pass_y = int(sizeY / (pensize / int(para_global['pixel size y (um)'])))
+    #         nb_column_total = sizeX*nb_pass_y
+           
+    #              # Pas possible gros LST
+      
+    #         range_very_small = 3*10 ** 6 # 3Mo
+    #         range_small = 10*10 ** 6  # range(1, 10**6) #50 Mo
+    #         range_50mega = 50*10 ** 6  # #100 Mo
+    #         range_100mega = 100*10 ** 6  # #100 Mo
+    #         range_300mega = 300*10 ** 6  # #100 Mo
+    #         range_500mega = 500*10 ** 6  # #100 Mo
+
+            
+    #         range_giga = 1000 *10** 6  # range(10**7 + 1, 1**12)  # 100 Mo
+    #         size_lst = int(size_lst / 2)  # car on lit des Uint16 donc 2 fois moins que le nombre de bytes (Uint8)
+    #         size_block = size_lst
+    #         size_one_scan = size_lst / nb_pass_y
+    #         size_4_column_scan = size_one_scan / (sizeX/4)  # taille 4 column
+    #         if size_4_column_scan < 10*10**6 and sizeX > 20:
+    #             size_4_column_scan = size_one_scan / (sizeX/8) # taille 8 column 
+    #         size_block = int(size_4_column_scan)
+
+        
+            
+    #         if nb_pass_y == 1 and size_lst < 50*10**6: 
+    #             size_block = size_lst
+          
+    #         nb_read_total = 0
+            
+            
+    #         if size_lst > size_block:
+    #             nb_loop = int(size_lst / size_block)
+    #             nb_loop += 1
+    #             reste = size_lst % size_block
+    #         else:
+    #             nb_loop = 1
+    #             reste = 0
+    #             nb_pass_y = 1
+
+    #         nb_byte_to_read = size_block
+    #         indice_in_datablock = 0
+    #         nb_read_total = 0
+    #         max_val_y_lue = 0
+    #         croissant = True
+    #         y_scan = int(sizeY / nb_pass_y) - 1
+    #         nb_column = int(sizeY / nb_pass_y)
+    #         data_array_previous = np.empty(0, dtype=np.uint16)
+    #         end_lst_file_found = False
+    #         last_x_maps = 0
+    #         columns = True
+
+    #         if nb_pass_y % 2 == 0:
+    #             last_x_maps = 0
+    #         else:
+    #             last_x_maps = sizeX - 1
+
+    #         for num_pass_y in range(nb_pass_y):
+
+    #             if (num_pass_y % 2 == 0):
+    #                 croissant = True
+    #                 next_x_value = np.zeros(12, dtype=np.uint16)
+
+    #             else:
+    #                 croissant = False
+    #                 next_x_value = np.full(12, sizeX - 1, dtype=np.uint16)
+
+
+    #             end_lst_file_found = False
+    #             y_max_current_scan = y_scan + (num_pass_y * nb_column)
+
+    #             cube_one_pass_pixe = np.empty((5, nb_column, sizeX, nbcanaux_pixe), dtype=np.uint32)
+    #             cube_one_pass_gamma20 = np.empty((1, nb_column, sizeX, nbcanaux_gamma20), dtype=np.uint32)
+    #             cube_one_pass_gamma70 = np.empty((1, nb_column, sizeX, nbcanaux_gamma70), dtype=np.uint32)
+    #             cube_one_pass_rbs = np.empty((3, nb_column, sizeX, nbcanaux_rbs), dtype=np.uint32)
+
+    #             fin_ligne = False
+    #             change_line= False
+
+    #             while (fin_ligne == False and end_lst_file_found == False):  # max_val_y_lue <= y_scan): # or croissa nte == False ):
+
+    #                 adc2read = 0
+    #                 adc_values = np.empty(0, dtype=np.uint16)
+    #                 data_array = np.empty(0, dtype=np.uint16)
+    #                 adjusted_indices = np.empty(0, dtype=np.uint16)
+    #                 adjusted_indices_previous = np.empty(0, dtype=np.uint16)
+
+    #                 min_last_pos_x_y_in_array = 0 #nb_byte_to_read
+    #                 data_array = np.fromfile(file_lst, dtype=np.uint16, count=int(nb_byte_to_read))
+    #                 if len(data_array) < nb_byte_to_read:
+    #                     end_lst_file_found = True
+    #                     print("End LST file found")
+
+    #                 adjusted_indices,data_array ,shape_data_array = AGLAEFile.return_adc_adjusted_index (data_array_previous, data_array)
+    #                 adc_values = np.array(data_array[adjusted_indices])
+
+
+    #                 nb_read_total += (nb_byte_to_read * 2) + len(data_array_previous)
+    #                 t1 = perf_counter()
+
+    #                 array_adc = [0,1,2,3,4,6,7,10,11]
+    #                 #array_adc = [0,4]
+    #                 for num_line_adc in array_adc: #range(12):
+    #                     #print(num_line_adc)
+    #                     if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 5: continue
+
+    #                     switcher = {5: nbcanaux_pixe, 0: nbcanaux_pixe, 1: nbcanaux_pixe, 2: nbcanaux_pixe, 3: nbcanaux_pixe, 4: nbcanaux_pixe, 80: nbcanaux_pixe, 81: nbcanaux_pixe,
+    #                                 82: nbcanaux_pixe, 6: nbcanaux_rbs, 7: nbcanaux_rbs, 10: nbcanaux_gamma20, 11: nbcanaux_gamma70}
+    #                     nbcanaux = switcher.get(num_line_adc)
+
+    #                     detector = ret_adc_name(num_line_adc)
+    #                     adc2read = num_line_adc + 1
+    #                     # adc2read = ret_num_adc(self.detector)
+    #                     t0 = perf_counter()
+    #                     # Return 
+    #                     non_zero_indices = AGLAEFile.return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc)
+    #                     if non_zero_indices[0] == -1:
+    #                         continue
+    #                     adc_words = data_array[non_zero_indices]
+    #                     indice_val_to_read = AGLAEFile.return_val_to_read(adc_words,non_zero_indices)
+
+    #                     max_size_x = ret_range_bytes(sizeX - 1)
+    #                     max_size_y = ret_range_bytes(sizeY - 1)
+    #                     coord_x = data_array[indice_val_to_read[ADC_X, :]]  
+    #                     coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
+    #                     coord_y = data_array[indice_val_to_read[ADC_Y, :]]  
+    #                     c1 = indice_val_to_read[9, :]
+    #                     c1 = c1[c1 != 0]
+                        
+    #                     if len(c1) < 100:
+    #                         continue
+    #                     coord_y = coord_y & max_size_y 
+
+    #                     # Met des -1 aux coord X et Y > valeur de la carto
+    #                     out_range_x = np.where(coord_x > sizeX - 1)
+    #                     coord_x = np.delete(coord_x, out_range_x)
+    #                     coord_y = np.delete(coord_y, out_range_x)
+    #                     coord_x = np.where(coord_x <= sizeX - 1, coord_x, np.full(len(coord_x), 0))
+    #                     coord_y = np.where(coord_y <= sizeY - 1, coord_y, np.full(len(coord_y), 0))
+                    
+    #                     max_val_y_lue,min_val_y_lue = AGLAEFile.read_min_max_y(coord_y)
+    #                     #first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+    #                     first_x_value, last_x_value = AGLAEFile.range_x(coord_x, croissant)
+
+                        
+    #                     change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
+    #                     val_x_fin_map = get_x_end_line_scan(croissant,sizeX) # retourne val 
+                        
+    #                     if change_line == False:
+    #                         fin_lst = look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,last_x_value)
+    #                     else:
+    #                         fin_lst = False
+                        
+    #                     find_x = get_x_to_exclude(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                       
+    #                     if change_line==True or fin_lst== True or end_lst_file_found == True: # Cas changement ligne ou fin fichier LST
+    #                         if end_lst_file_found == True:
+    #                             toto=1
+                            
+    #                         if last_x_value < first_x_value and croissant==True:
+    #                             last_x_value = sizeX-1
+                            
+    #                         if fin_lst==False and end_lst_file_found == False:
+    #                             indice_last = AGLAEFile.read_max_indice_change_colonne(coord_y,y_max_current_scan) #Recherche last_indice avec Y < scan total
+    #                         elif end_lst_file_found == True or fin_lst == True:
+    #                             indice_last = len(coord_y) -1
+
+    #                         fin_ligne = True
+    #                         if num_line_adc== 0 :
+    #                             if croissant==True:
+    #                                 print("X:", last_x_value,end=",")
+    #                             else:
+    #                                 print("X:",first_x_value,end=",")
+
+    #                         coord_x = coord_x[:indice_last]
+    #                         coord_y = coord_y[:indice_last]
+    #                         max_data_array = indice_val_to_read[ADC_X, indice_last]
+
+    #                         if max_data_array > min_last_pos_x_y_in_array:
+    #                               min_last_pos_x_y_in_array = max_data_array
+
+    #                     else:  # recherche la dernire valeur de X
+    #                         columns= get_colums_range(croissant,first_x_value,last_x_value)
+    #                         if end_lst_file_found == False:
+    #                             columns= get_colums_range(croissant,first_x_value,last_x_value)
+    #                             if columns == True: # plus de 1 colonne
+    #                                 indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,find_x)#,next_x_value[num_line_adc])
+    #                             else:
+    #                                 find_x = first_x_value
+    #                                 indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,find_x)#,next_x_value[num_line_adc])
+                            
+                                
+    #                             if num_line_adc== 0 :
+    #                                 #print("X:", last_x_value,end=",")
+    #                                 print("X:", find_x,end=",")
+                                
+    #                             max_data_array = indice_val_to_read[ADC_X, indice_last]
+    #                             coord_x = coord_x[:indice_last]
+    #                             coord_y = coord_y[:indice_last]
+
+
+    #                             if max_data_array > min_last_pos_x_y_in_array:
+    #                                     min_last_pos_x_y_in_array = max_data_array
+
+    #                         else: # Fin du fichier on mets les bornes max pour X
+    #                             if num_line_adc== 0 :
+    #                                 print("X:", last_x_value,end=",")
+    #                             if croissant == True:
+    #                                 first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+    #                             else:
+    #                                 last_x_value = 0
+
+
+    #                         indice_x_last = len(coord_x)
+
+
+    #                     non_zero_indices = np.nonzero(indice_val_to_read[num_line_adc, :indice_last])
+    #                     if len(non_zero_indices[0]) < 2:  # pas de valeur pour cet adc dans ce Block de Data Array
+    #                         continue
+
+    #                     adc1 = data_array[indice_val_to_read[num_line_adc, non_zero_indices]]
+    #                     adc1 = np.array(adc1 & nbcanaux - 1)
+    #                     if num_pass_y != 0:
+    #                         coord_y = coord_y - (num_pass_y * nb_column)
+
+    #                     new_coord_x = coord_x [non_zero_indices]
+    #                     new_coord_y = coord_y [non_zero_indices]
+
+    #                     #if (croissant == True and last_x_value==sizeX-1) or (croissant == False and last_x_value == 0):
+    #                     if (croissant == True and find_x==sizeX-1) or (croissant == False and find_x == 0):
+    #                         fin_ligne = True
+                        
+                       
+    #                     p1 = first_x_value
+                       
+    #                     if last_x_value == sizeX-1:
+    #                         p2 = last_x_value # Je prend la dernier column en compte dans mon histogramme
+    #                     elif croissant == False:
+    #                         p2 = last_x_value
+    #                     else:
+    #                         p2 = last_x_value -1
+
+                      
+
+                       
+    #                     if croissant == True:
+    #                         adc3 =adc1[0]
+    #                         del adc1
+                         
+    #                         if columns == False:
+    #                             # range_histo = 1first_x_value == last_x_value - 1 and fin_ligne == False: # Une seule column dans le dataArray
+    #                             range_histo = 1
+    #                         else:
+    #                             r1 = [p1, p2]
+    #                             range_histo = (p2 - p1) + 1
+
+    #                     else:
+    #                         new_coord_x = np.delete(new_coord_x, 0)
+    #                         new_coord_x = np.flip(new_coord_x)
+    #                         new_coord_y = np.delete(new_coord_y, 0)
+    #                         new_coord_y = np.flip(new_coord_y)
+    #                         adc2 = np.delete(adc1[0], 0)
+    #                         adc3 = np.flip(adc2)
+    #                         del adc1
+
+    #                         if columns == False:
+    #                             range_histo = 1
+    #                         elif p2>p1:
+    #                             r1 = [p1, p2]
+    #                             range_histo = (p2 - p1) + 1
+    #                         else:
+    #                             range_histo = 1
+                       
+    #                     if range_histo==1:
+    #                        H1, xedges, yedges= np.histogram2d(new_coord_y,adc3,bins=(nb_column,nbcanaux),range= ({0, nb_column-1},{0, nbcanaux-1}))
+                        
+    #                     else:
+    #                         H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc3),
+    #                                                range=({0, nb_column-1}, r1, {0, nbcanaux-1}),
+    #                                                bins=(nb_column, range_histo, nbcanaux))
+                       
+                    
+                       
+    #                     if croissant == True:
+    #                         if last_x_value == sizeX-1:
+    #                             last_x_value = last_x_value +1 # Incrément de 1 pour la derniere column car H1 a une dimension +1
+    #                     else:
+    #                         last_x_value = last_x_value +1
+
+
+    #                     if num_line_adc <=4:
+    #                         if range_histo == 1:
+    #                             cube_one_pass_pixe[num_line_adc ,:, first_x_value, :] = H1
+    #                         else:
+    #                             cube_one_pass_pixe[num_line_adc][0:,first_x_value:last_x_value, 0:] = H1
+
+    #                     elif num_line_adc == 6 or  num_line_adc == 7:
+    #                         if range_histo == 1:
+    #                             cube_one_pass_rbs[num_line_adc-6 ,:, first_x_value, :] = H1
+    #                             #cube_one_pass_rbs[num_line_adc - 6][0:, int(next_x_value[num_line_adc]),0:] = H1
+    #                         else:
+    #                             cube_one_pass_rbs[num_line_adc - 6][0:,first_x_value:last_x_value, 0:] = H1
+
+    #                     elif num_line_adc == 10:
+    #                         if range_histo == 1:
+
+    #                             cube_one_pass_gamma20[0][0:, int(next_x_value[num_line_adc]),0:] = H1
+    #                         else:
+    #                             cube_one_pass_gamma20[0][0:,first_x_value:last_x_value, 0:] = H1
+
+    #                     elif num_line_adc == 11:
+    #                         if range_histo == 1:
+    #                             cube_one_pass_gamma70[0][0:, first_x_value,0:] = H1
+    #                         else:
+    #                             cube_one_pass_gamma70[0][0:,first_x_value:last_x_value, 0:] = H1
+
+                    
+    #                     if range_histo != 1 and croissant == True:
+    #                         next_x_value[num_line_adc] = last_x_value
+    #                     else:
+    #                         next_x_value[num_line_adc] = first_x_value
+                        
+
+    #                 if min_last_pos_x_y_in_array < int(shape_data_array):
+    #                     data_array_previous = []
+    #                     data_array_previous = data_array[min_last_pos_x_y_in_array+5:]
+    #                     adjusted_indices_previous = adjusted_indices
+
+    #             # data_array_previous = np.empty(0, dtype=np.uint16)
+    #             for num_line_adc in range(12):
+    #                 if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 5: continue
+    #                 adc2read = num_line_adc + 1
+    #                 detector = ret_adc_name(num_line_adc)
+    #                 if num_line_adc <= 4 :
+    #                     data = cube_one_pass_pixe[num_line_adc]
+    #                 elif num_line_adc == 6 or num_line_adc == 7:
+    #                     data = cube_one_pass_rbs[num_line_adc-6]
+    #                 elif num_line_adc == 10 :
+    #                     data = cube_one_pass_gamma20[0]
+    #                 elif num_line_adc == 11:
+    #                     data = cube_one_pass_gamma70[0]
+
+    #                 #AGLAEFile.feed_hdf5_map(data, path_lst, detector, "FinalHDF", adc2read, sizeX, sizeY,nbcanaux,num_pass_y)
+    #                 AGLAEFile.feed_hdf5_map(data, path_lst, detector, num_pass_y,_dict_adc_metadata_arr[num_line_adc])
+
+    #             AGLAEFile.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,_dict_adc_metadata_arr)
+    #             print("\n")
