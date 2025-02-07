@@ -7,6 +7,8 @@ from datetime import datetime
 from time import perf_counter
 import configparser
 from time import sleep
+import fnmatch
+from PIL import Image
 # import matplotlib.pyplot as plt
 
 
@@ -43,25 +45,95 @@ class AGLAEFile(object):
             dset = subgroup.create_dataset(dataset_name, data=data)
 
     @staticmethod
-    def create_empty_hdf5(filename: str, data_shape, dtype=np.float64, group_name="XRF_analysis",
+    def create_empty_prj_hdf5(filename: str, group_name="Global", file_lock=_FILE_LOCK_1):
+        '''Create an empty HDF5 file with a group'''
+        with file_lock:
+            with h5py.File(filename, 'w') as h5file:
+                subgroup = h5file.require_group(group_name)
+                
+
+    @staticmethod
+    def create_empty_hdf5(filename: str, data_shape, dtype=np.float32, group_name="20250127_0001",
                           dataset_name="dataset", file_lock=_FILE_LOCK_1):
+        '''Create an empty HDF5 file with a group and a dataset'''
         with file_lock:
             with h5py.File(filename, 'w') as h5file:
                 subgroup = h5file.require_group(group_name)
                 dset = subgroup.create_dataset(dataset_name, shape=data_shape, dtype=dtype)
 
     @staticmethod
-    def feed_existing_hdf5(filename, data, group_name="XRF_analysis", dataset_name="dataset", file_lock=_FILE_LOCK_1):
+    def feed_image_video_hdf5(img_name:str,filename, path_image_dir:str,path_image_video:str,group_name="Screen_capture", file_lock=_FILE_LOCK_1):
+        '''Feed an HDF5 file with the video image'''
+        with file_lock: 
+            with h5py.File(filename, 'a') as h5file:
+                group = h5file.require_group(group_name)
+                path_img_to_read = os.path.join(path_image_dir, path_image_video[0])
+                raw_img = Image.open(path_img_to_read)  # Conversion PIL -> NumPy
+                resized_image = raw_img.resize((int(raw_img.width/2),int(raw_img.height/2)))
+                rgb_image = resized_image.convert("RGB")
+                img = np.array(rgb_image)
+                #dataset_name = path_image_video[0].split(".")[0]
+                dataset_name = img_name
+                try:
+                    dataset = group.create_dataset(dataset_name, data=img, compression="gzip", compression_opts=9)
+                except:
+                    del group[dataset_name]
+                    dataset = group.create_dataset(dataset_name, data=img, compression="gzip", compression_opts=9)
 
+                dataset.attrs["CLASS"] = np.bytes_("IMAGE")           # Type de dataset
+                dataset.attrs["IMAGE_VERSION"] = np.bytes_("1.2")     # Version du format
+                dataset.attrs["IMAGE_SUBCLASS"] = np.bytes_("IMAGE_TRUECOLOR")  # Type de couleur
+
+    @staticmethod
+    def feed_image_hdf5(filename, image_path, path_image_dir:str, group_name="Screen_capture", file_lock=_FILE_LOCK_1):
+        '''Feed an HDF5 file with an image'''
+        with file_lock: 
+            with h5py.File(filename, 'a') as h5file:
+                group = h5file.require_group(group_name)
+            
+                try:
+                    subgroup = group.create_group("screen_capture")
+                except:
+                    subgroup = group.get("screen_capture")
+
+                for img1 in image_path:
+                    dataset_name = img1.split(".")[0]
+                    path_img_to_read = os.path.join(path_image_dir, img1)
+                    raw_img = Image.open(path_img_to_read)  # Conversion PIL -> NumPy
+                    #resized_image = raw_img.resize((int(raw_img.width/2),int(raw_img.height/2)))
+                    rgb_image = raw_img.convert("L")
+                    img = np.array(rgb_image)  # Conversion PIL -> NumPy
+
+                    try:
+                        dataset = subgroup.create_dataset(dataset_name, data=img, compression="gzip", compression_opts=9)
+                    except:
+                        del subgroup[dataset_name]
+                        dataset = subgroup.create_dataset(dataset_name, data=img, compression="gzip", compression_opts=9)
+                    # Métadonnées obligatoires pour HDFView 
+                    dataset.attrs["CLASS"] = np.bytes_("IMAGE")           # Type de dataset
+                    dataset.attrs["IMAGE_VERSION"] = np.bytes_("1.2")     # Version du format
+                    dataset.attrs["IMAGE_SUBCLASS"] = np.bytes_("IMAGE_GRAYSCALE")  # Type de couleur
+                    #dataset.attrs["IMAGE_MINMAXRANGE"] = np.array([0, 255], dtype=np.uint8)  # Gamme de valeurs
+
+    @staticmethod
+    def feed_existing_hdf5(filename, data, group_name="XRF_analysis", dataset_name="dataset", file_lock=_FILE_LOCK_1):
+        '''Feed an existing HDF5 file with data'''
         with file_lock:
             with h5py.File(filename, 'a') as h5file:
+                subgroup = h5file.require_group(group_name)
+                try:
+                    dset = subgroup.create_dataset(dataset_name, shape=np.shape(data), dtype=np.int32)
+                except:
+                    del subgroup[dataset_name]
+                    dset = subgroup.create_dataset(dataset_name, shape=np.shape(data), dtype=np.int32)
+
                 dset = h5file[f'{group_name}/{dataset_name}']
                 dset[:] = data
 
     @staticmethod
     def get_dataset_data_hdf5(filename, group_name: str = "XRF_analysis", dataset_name: str = "dataset",
                               file_lock=_FILE_LOCK_1):
-
+        '''Get data from an HDF5 file'''
         with file_lock:
             with h5py.File(filename, 'r') as h5file:
                 group = h5file.require_group(f'{group_name}')
@@ -112,7 +184,10 @@ class AGLAEFile(object):
         hdf.close()
 
     @staticmethod
-    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y,dict_metadata_one_adc):
+    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y, dict_metadata_one_adc):
+        if mydata.size == 0:
+            print(f"No data to write for detector {detector}")
+            return
  
         destfile = Pathlst.split(".")
         newdestfile = destfile[0] + ".hdf5"
@@ -126,9 +201,7 @@ class AGLAEFile(object):
                     #nxData = h5file[f'{group_name}']
                     nxData.resize((nxData.shape[0] + mydata.shape[0],nxData.shape[1] ,nxData.shape[2]))
                     nxData[-mydata.shape[0]:,0:, :] = mydata
-                    
-
- 
+                 
             else:
                     try:
                         del h5file[f'{group_name}']
@@ -142,8 +215,8 @@ class AGLAEFile(object):
                         
                     #dset = h5file.require_dataset(group_name, data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
         h5file.close()
-    
-  
+
+
     @staticmethod
     def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y,_dict_adc_metadata_arr):
     
@@ -175,7 +248,7 @@ class AGLAEFile(object):
 
             AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
 
-
+    @staticmethod
     def write_hdf5_metadata(Pathfile, dict_glob_metadata):
         # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
         head_tail = os.path.split(Pathfile)# Split le Path et le fichier
@@ -223,7 +296,7 @@ class AGLAEFile(object):
 
         f.close()
 
-
+    @staticmethod
     def finalhdf5(Pathfile,detname):
         head_tail = os.path.split(Pathfile)  # Split le Path et le fichier
         destfile = head_tail[1].split(".")
@@ -254,8 +327,8 @@ class AGLAEFile(object):
 
         return FinalHDF
 
-
-    def open_header_lst(pathlst):
+    @staticmethod
+    def open_header_lst(pathlst:str):
         import os
         # pathlst = "E:/21mai0106.lst"
         tmpheader = ""
@@ -275,6 +348,7 @@ class AGLAEFile(object):
         datainname = root_text[0].split("_")
         if len(datainname) > 4:
             dateacq = datainname[0]
+            num_analyse = datainname[1]
             objetacq = datainname[2]
             projetacq = datainname[3]
         else:
@@ -283,8 +357,10 @@ class AGLAEFile(object):
             projetacq = "?"
 
         dict_metadata_global["obj"] = objetacq
+        dict_metadata_global["num analyse"] = num_analyse
         dict_metadata_global["prj"] = projetacq
         dict_metadata_global["filename"] = dateacq
+        dict_metadata_global["type analyse"] = "OBJ"
         t =0
         det_aglae = ["X0", "X1", "X3", "X4", "X10", "X11", "X12", "X13", "RBS", "RBS150", "RBS135",
                      "GAMMA", "GAMMA70", "GAMMA20", "IBIL", "FORS"]
@@ -384,6 +460,11 @@ class AGLAEFile(object):
                     para = str.split(str(tmpheader), sep=':')
                     text = AGLAEFile.clean_text(para[1])  
                     dict_metadata_global["obj euphrosyne"] =text
+                    if str.upper (text) == "STANDARD":
+                        dict_metadata_global["type analyse"] = "STD"
+                    else:
+                        dict_metadata_global["type analyse"] = "STD"
+
                         
                 if "Map size:" in str(tmpheader):
                     para2 = str.split(str(tmpheader), sep=':')
@@ -702,7 +783,7 @@ class AGLAEFile(object):
 
 
 
-    def extract_lst_vector(path_lst, dict_para_global,_dict_adc_metadata_arr):
+    def extract_lst_vector(path_lst:str, dict_para_global:dict,_dict_adc_metadata_arr:dict):
         pathlst1 = path_lst
         _dict_channel_adc,_dict_config_mpawin_adc,_dict_combined_adc = read_cfg_adc()
         print(_dict_channel_adc)
@@ -772,8 +853,6 @@ class AGLAEFile(object):
             size_block = size_lst
             size_one_scan = size_lst / nb_pass_y
             size_4_column_scan = (size_one_scan / (sizeX)) * 4 #/(sizeX/40))  # taille 4 column
-            # if size_4_column_scan < 10*10**6 and sizeX > 20:
-            #     size_4_column_scan = size_one_scan / (sizeX/8) # taille 8 column 
             size_block = int(size_4_column_scan)
             size_block_big = int(size_4_column_scan) * 4
             large_map = False
@@ -1146,13 +1225,14 @@ class AGLAEFile(object):
                 print("\n")
 
 
-
+@staticmethod
 def getSize(fileobject):
     fileobject.seek(0,2) # move the cursor to the end of the file
     size = fileobject.tell()
     return size
 
 
+@staticmethod
 def get_x_to_exclude(croissant,columns,last_x_value,first_x_value,change_line,fin_lst):
     """Recupére X pour exclure dans ce process"""
     if columns==True and change_line==False and fin_lst==False:
@@ -1168,6 +1248,7 @@ def get_x_to_exclude(croissant,columns,last_x_value,first_x_value,change_line,fi
         
     return find_x
 
+@staticmethod
 def get_x_end_line_scan(croissant,sizex):
     """Get le X max du scan suivant ligne pair/impaire"""
     if croissant==True:
@@ -1176,6 +1257,7 @@ def get_x_end_line_scan(croissant,sizex):
         end_x=0
     return end_x
 
+@staticmethod
 def look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,val_fin_x):
     """informe si on atteins la fin du fichier LST"""
     if max_val_y_lue==sizeY-1 and val_x_fin_map == val_fin_x: #Fin du fichier LST ?
@@ -1184,6 +1266,7 @@ def look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,val_fin_x):
         fin_lst = False
     return fin_lst
 
+@staticmethod
 def look_if_next_line(max_val_y_lue,y_scan_total):
     """informe si le dataset contient la fin du scan """
     
@@ -1194,7 +1277,7 @@ def look_if_next_line(max_val_y_lue,y_scan_total):
 
     return change_line
    
-          
+@staticmethod          
 def ret_num_adc(detector):
    switcher = {
                 "LE0":  0b0000000000010000, #2A
@@ -1211,6 +1294,7 @@ def ret_num_adc(detector):
                             }
    return switcher.get(detector)
 
+@staticmethod
 def ret_adc_name(num_adc):
    switcher = {
                0: "X1",
@@ -1234,6 +1318,7 @@ def ret_adc_name(num_adc):
                             }
    return switcher.get(num_adc)
 
+@staticmethod
 def ret_range_bytes(val):
     """Donne n°bits max pour valeur"""
     for bits in range(16):
@@ -1293,12 +1378,8 @@ class HDF5Store(object):
 # RBS = 512
 # GAMMA20 = 2048
 # GAMMA70 = 4096
-def ascii_spectra_to_hdf5(_path_ascii,_type_analyse):
-     with open(_path_ascii) as File_Spectre:
-            header1 = File_Spectre.readline()
-            header1 = File_Spectre.readline()
-            data_spectre = File_Spectre.readlines()
 
+    
 
 
 
@@ -1334,37 +1415,185 @@ def read_cfg_adc(path=None):
             
         return dict_channel_adc,dict_config_mpawin_adc,dict_combined_adc
 
+
+def images_to_hdf5(path_ascii:str, dict_metadata_global:dict):
+    '''Fonction pour lire les images du dossier Screen_capture et les mettre dans un fichier HDF5'''
+    head_tail = os.path.split(path_ascii)# Split le Path et le fichier
+    dateacq =  dict_metadata_global["filename"]
+    num_analyse = dict_metadata_global["num analyse"]
+    type_hdf5 = dict_metadata_global["type analyse"] # OBJ ou STD
+    projetacq = dict_metadata_global["prj"]
+    hdf5_group = dateacq + "_" + num_analyse + "_" + type_hdf5
+    _path_image_dir = os.path.join(head_tail[0], 'Screen_capture')
+    path_image = os.path.join(_path_image_dir,dateacq + "_" +num_analyse)
+    list_image, image_video = get_images_by_base_name(path_image)
+    list_hdf5 = []
+    #hdf5_file = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + type_hdf5 + ".hdf5")
+    hdf5_file_obj = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + "OBJ" + ".hdf5")
+    hdf5_file_std = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + "STD" + ".hdf5")
+
+    if type_hdf5 == 'STD':
+        list_hdf5 = [hdf5_file_obj, hdf5_file_std]
+    else:
+        list_hdf5 = [hdf5_file_obj]
+        hdf5_file_std = "none"   
+
+    for local_hdf5_file in list_hdf5:
+        if  list_image != []:
+            AGLAEFile.feed_image_hdf5(filename=local_hdf5_file, image_path=list_image, 
+                                    path_image_dir= _path_image_dir,group_name=hdf5_group)   
+        if image_video != []:
+           img_name = dateacq + "_" + num_analyse + "_" + "image_area"
+           AGLAEFile.feed_image_video_hdf5(img_name=img_name,filename=local_hdf5_file, path_image_video=image_video, 
+                                           path_image_dir= _path_image_dir, group_name=hdf5_group)
+
     
 
+def ascii_to_hdf5(path_ascii:str, dict_metadata_global:dict, dict_adc_metadata_arr:np):
+    head_tail = os.path.split(path_ascii)# Split le Path et le fichier
+    objetacq =  dict_metadata_global["obj"]
+    projetacq = dict_metadata_global["prj"]
+    dateacq =  dict_metadata_global["filename"]
+    num_analyse = dict_metadata_global["num analyse"]
+    type_hdf5 = dict_metadata_global["type analyse"] # OBJ ou STD
+    hdf5_group = dateacq + "_" + num_analyse + "_" + type_hdf5
+    spectra_aglae=list_spectra_with_same_name(path_ascii)
+       
+        
+    print(type_hdf5)
+    #hdf5_file_obj = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + 'type_hdf5' + ".hdf5")
+    hdf5_file_obj = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + "OBJ" + ".hdf5")
+    hdf5_file_std = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + "STD"+".hdf5")
+    
+      
+    if type_hdf5 == 'STD':                                     
+        if not os.path.exists(hdf5_file_obj):   
+            AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group)
+        if not os.path.exists(hdf5_file_std):  
+            AGLAEFile.create_empty_prj_hdf5(hdf5_file_std,hdf5_group)
+        list_hdf5 = [hdf5_file_obj,hdf5_file_std]
+    else: # only OBJ
+        hdf5_file_std = "none" 
+        AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group) 
+        list_hdf5 = [hdf5_file_obj]
+        
+
+    for spe in spectra_aglae:
+        _path_spe=os.path.join(head_tail[0],spe)
+        hdf5_dataset = str.upper(spe.split(".")[1])
+        try:
+            np_data_spectre = read_ascii_spectra(_path_spe)
+        except:
+            np_data_spectre = read_ascii_spectra_2column(_path_spe)
+
+        for local_hdf5_file in list_hdf5:
+            AGLAEFile.feed_existing_hdf5(filename= local_hdf5_file, data= np_data_spectre, group_name=hdf5_group, dataset_name = hdf5_dataset)
+                        
+        # if type_hdf5 == "STD":
+
+        #     AGLAEFile.feed_existing_hdf5(filename= hdf5_file_std, data= np_data_spectre, group_name=hdf5_group, dataset_name = hdf5_dataset)
+        # else:
+        #     AGLAEFile.feed_existing_hdf5(filename= hdf5_file_obj, data= np_data_spectre, group_name=hdf5_group, dataset_name = hdf5_dataset)
+        
+
+def read_ascii_spectra(path_ascii:str):
+    """Read spectra format GUPIX -> 1 Column"""
+    with open(path_ascii) as File_Spectre:
+        header1 = File_Spectre.readline()
+        header1 = File_Spectre.readline()
+        data_spectre = File_Spectre.readlines()
+        data_spectre = np.array(data_spectre)
+        data_spectre = data_spectre.astype(np.int32)
+        
+        
+    return data_spectre
+
+def read_ascii_spectra_2column(path_ascii:str):
+    """Read spectra format SimNRA (RBS) -> 2 Column"""
+    
+    with open(path_ascii) as File_Spectre:
+        header1 = File_Spectre.readline()
+        as_header = False
+        if header1 == "[DISPLAY]\n":
+            as_header = True
+            str = ""
+            while str !="[DATA]\n":
+                str = File_Spectre.readline()
+                if str =="[DATA]\n":
+                    break
+                                
+        data_spectre = File_Spectre.readlines()
+        if as_header== False:
+            data_spectre.insert(0,header1) 
+        np_data_spectre = np.empty(len(data_spectre),dtype= np.int32)
+        t= [line.split('\t') for line in data_spectre]
+        for line,values in t:
+            np_data_spectre[np.int32(line)]= np.int32(values)
+    
+    return np_data_spectre
+
+
+def get_images_by_base_name(path_image):
+    '''Retourne les fichiers screen_capture  et capture video correspondant à un nom de base'''
+    head_tail = os.path.split(path_image)# Split le Path et le fichier
+    destfile = head_tail[1].split(".")
+    # Utilisez glob pour trouver les fichiers correspondants
+    try:    
+        fichiers = os.listdir(head_tail[0])
+    except:
+        print("No such file or directory")
+        return  None
+        
+    # Filtre les fichiers avec le motif "toto.*"
+    fichiers_image = fnmatch.filter(fichiers, destfile[0] +'*.png')
+    fichiers_image_video = fnmatch.filter(fichiers, destfile[0] +'*Video.jpg')
+    
+    
+    return fichiers_image,fichiers_image_video
+
+def list_spectra_with_same_name(path_ascii):
+    head_tail = os.path.split(path_ascii)# Split le Path et le fichier
+    destfile = head_tail[1].split(".")
+    fichiers = os.listdir(head_tail[0])
+    # Filtre les fichiers avec le motif "destfile"
+    fichiers_spectra = fnmatch.filter(fichiers, destfile[0] +'.*')
+  
+    return fichiers_spectra
+
+
 def main():
-    print("hello")
+    print("hello master")
     _path_lst = ""
     _fnct = "maps"
+    _path_ascii = ""
     if len(sys.argv) < 2:
-        print("Usage: script.py <arg1> <arg2> ...")
+        print("Usage:  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
+        #_path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
         _path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
-        _fnct = "maps"
-        _type_analyse = ""
+        _path_ascii = "C:\\Data\\20220725_Renne-provenance\\20220725_Renne-provenance\\20220725_0001_std_RENNE-PROV_IBA.x0"
+        _fnct = "SPECTRA"
     else:
-        _path_lst = lst_arg[1] 
-        _fnct = lst_arg[2]
-        _type_analyse = lst_arg[3]
+        _fnct = str.upper(lst_arg[1])
+        _path_lst = lst_arg[2]
+        if len(sys.argv) > 2: # En cas de cas MAPS pas d'argument 3
+            _path_ascii = lst_arg[3]
 
         #return
+    #_fnct =str.upper("spectra")
+    dict_adc_metadata_arr,dict_metadata_global = AGLAEFile.open_header_lst(_path_lst)
 
     for arg in sys.argv[1:]:
         print(f"Argument: {arg}")
 
-    if _fnct== "maps":
-        _dict_adc_metadata_arr,_dict_metadata_global = AGLAEFile.open_header_lst(_path_lst)
-        
+    if _fnct== "MAPS":
         #_config_adc = read_cfg_adc()
     
-        AGLAEFile.extract_lst_vector(_path_lst,_dict_metadata_global,_dict_adc_metadata_arr)
-        AGLAEFile.write_hdf5_metadata(_path_lst,_dict_metadata_global)
-    elif _fnct == "spectra":
-        ascii_spectra_to_hdf5("c:_path_ascii,_type_analyse")
-    
+        AGLAEFile.extract_lst_vector(_path_lst, dict_metadata_global, dict_adc_metadata_arr)
+        AGLAEFile.write_hdf5_metadata(_path_lst, dict_metadata_global)
+    elif _fnct == "SPECTRA":
+      
+        ascii_to_hdf5(_path_ascii,dict_metadata_global,dict_adc_metadata_arr)
+        images_to_hdf5(_path_ascii,dict_metadata_global)
 
 if __name__ == "__main__":
    lst_arg = sys.argv
