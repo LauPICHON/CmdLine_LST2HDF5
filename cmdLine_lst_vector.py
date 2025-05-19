@@ -48,16 +48,27 @@ class AGLAEFile(object):
     def create_empty_prj_hdf5(filename: str, group_name="Global", file_lock=_FILE_LOCK_1):
         '''Create an empty HDF5 file with a group'''
         with file_lock:
-            with h5py.File(filename, 'w') as h5file:
+            with h5py.File(filename, 'a') as h5file:
                 subgroup = h5file.require_group(group_name)
-                
+
+    @staticmethod
+    def metadata_prj_hdf5(filename: str, group_name:str, dict_glob_metadata:dict, file_lock=_FILE_LOCK_1):
+        '''Create an empty HDF5 file with a group'''
+        with file_lock:
+            with h5py.File(filename, 'a') as h5file:
+                grp = h5file.require_group(group_name)
+                for exp_attr in dict_glob_metadata:
+                     grp.attrs[exp_attr] = dict_glob_metadata[exp_attr]
+                     
+                #grp.attrs["Date"] = datetime.now().strftime('%d/%m/%Y')
+    
 
     @staticmethod
     def create_empty_hdf5(filename: str, data_shape, dtype=np.float32, group_name="20250127_0001",
                           dataset_name="dataset", file_lock=_FILE_LOCK_1):
         '''Create an empty HDF5 file with a group and a dataset'''
         with file_lock:
-            with h5py.File(filename, 'w') as h5file:
+            with h5py.File(filename, 'a') as h5file:
                 subgroup = h5file.require_group(group_name)
                 dset = subgroup.create_dataset(dataset_name, shape=data_shape, dtype=dtype)
 
@@ -229,8 +240,6 @@ class AGLAEFile(object):
             elif num_det == 134:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
                 metadata_one_adc = _dict_adc_metadata_arr[0]
-                print("1+3+4")
-                print(np.shape(data))
             elif num_det == 12:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1]
                 metadata_one_adc = _dict_adc_metadata_arr[0]
@@ -246,6 +255,7 @@ class AGLAEFile(object):
             
             detector_name = ret_adc_name(num_det)
 
+            AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
             AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
 
     @staticmethod
@@ -295,6 +305,55 @@ class AGLAEFile(object):
             grp.attrs["Objet"] = "obj"
 
         f.close()
+
+    @staticmethod
+    def write_spectra_hdf5_metadata(Pathfile, dict_glob_metadata):
+        # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
+        head_tail = os.path.split(Pathfile)# Split le Path et le fichier
+        destfile = head_tail[1].split(".")
+        newdestfile = destfile[0] + ".hdf5"
+        index_iba= destfile[0].find("_IBA_")
+        index_l1 = destfile[0].find("_L1_")
+        index_xrf = destfile[0].find("_XRF1_:")
+        det_aglae = ["X0", "X1", "X2", "X3", "X4", "X10", "X11","X12","X13","RBS","RBS150","RBS135","GAMMA","GAMMA70","GAMMA20","IBIL","FORS"]
+        iba_para = False
+   
+        if destfile[1] == 'lst':
+            newdestfile = destfile[0] + ".hdf5"
+
+
+        newdestfile1 =  os.path.join(head_tail[0], newdestfile)
+
+        # print(newdestfile)
+        try:
+            f = h5py.File(newdestfile1, 'a')
+
+        except:
+             f = h5py.File(newdestfile1, 'w')
+        try:
+            del f["Experimental parameters"]
+        except:
+            pass
+        try:
+            del f["stack/detector"]
+        except:
+            pass
+        iba_para = True
+        if iba_para == True:
+            grp = f.create_group("Experimental parameters")
+            root = f['/']
+            for exp_attr in dict_glob_metadata:
+                 grp.attrs[exp_attr] = dict_glob_metadata[exp_attr]
+                 root.attrs[exp_attr] = dict_glob_metadata[exp_attr]
+
+        else:
+        
+            grp = f.create_group("parametres")
+            grp.attrs["Date"] = "date"
+            grp.attrs["Objet"] = "obj"
+
+        f.close()
+
 
     @staticmethod
     def finalhdf5(Pathfile,detname):
@@ -359,7 +418,7 @@ class AGLAEFile(object):
         dict_metadata_global["obj"] = objetacq
         dict_metadata_global["num analyse"] = num_analyse
         dict_metadata_global["prj"] = projetacq
-        dict_metadata_global["filename"] = dateacq
+        dict_metadata_global["filename"] = dateacq #En général la date acquisition -> 20250105''
         dict_metadata_global["type analyse"] = "OBJ"
         t =0
         det_aglae = ["X0", "X1", "X3", "X4", "X10", "X11", "X12", "X13", "RBS", "RBS150", "RBS135",
@@ -414,11 +473,11 @@ class AGLAEFile(object):
                         text = AGLAEFile.clean_text(text)
                         text2 = str.split(text, sep=':')[1]
                         if "detector" in str(text): 
-                            dict_metadata["detector"] = str.split(text, sep=':')[1]
+                            dict_metadata["SDD detector type"] = str.split(text, sep=':')[1]
                         if "active area" in str(text):
-                            dict_metadata["active area"]= str.split(text, sep=':')[1]
+                            dict_metadata["SDD active area"]= str.split(text, sep=':')[1]
                         if "thickness" in str(text):
-                            dict_metadata["thickness"] =str.split(text, sep=':')[1]
+                            dict_metadata["SDD thickness"] =str.split(text, sep=':')[1]
                         if "window" in str(text):
                             dict_metadata["window"] =str.split(text, sep=':')[1]
                         if "angle"in str(text) :
@@ -431,10 +490,16 @@ class AGLAEFile(object):
                     text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
                     dict_metadata["filter"] =text
                 
+                               
                 if "calibration:" in str(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
                     text = AGLAEFile.clean_text(para[1])
                     dict_metadata["calibration"] = text
+
+                if "institution:" in str(tmpheader):
+                    para = str.split(str(tmpheader), sep=':')
+                    text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
+                    dict_metadata_global["institution"] = text
 
                 if "analyse description:" in str(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
@@ -463,7 +528,7 @@ class AGLAEFile(object):
                     if str.upper (text) == "STANDARD":
                         dict_metadata_global["type analyse"] = "STD"
                     else:
-                        dict_metadata_global["type analyse"] = "STD"
+                        dict_metadata_global["type analyse"] = "OBJ"
 
                         
                 if "Map size:" in str(tmpheader):
@@ -893,9 +958,10 @@ class AGLAEFile(object):
                 last_x_maps = 0
             else:
                 last_x_maps = sizeX - 1
-
+            nb_total_event = 0
+            nb_event_x0 = 0 
             for num_pass_y in range(nb_pass_y):
-                print(num_pass_y ,"//",nb_pass_y)
+                print(num_pass_y ,"//",nb_pass_y,end='\n')
 
                 if end_lst_file_found==True: # fin LST avant fin de la taille de la carto (ABORT sur New Orion)
                     break   
@@ -941,16 +1007,16 @@ class AGLAEFile(object):
                     #             nb_byte_to_read = size_block_big
                     #         else:
                     nb_byte_to_read = size_block
-                                
-
+                              
                     min_last_pos_x_y_in_array = 0 #nb_byte_to_read
                     data_array = np.fromfile(file_lst, dtype=np.uint16, count=int(nb_byte_to_read))
         
                     if len(data_array) < nb_byte_to_read:
                         end_lst_file_found = True
-                        print("End LST file found")
+                        print("\n End LST file found",end='\n' )
                     
-
+                    nb_32768 = np.count_nonzero(data_array == 32768)
+                    nb_total_event = nb_total_event + nb_32768
                     adjusted_indices, data_array ,shape_data_array = AGLAEFile.return_adc_adjusted_index (data_array_previous, data_array)
                     adc_values = np.array(data_array[adjusted_indices])
                     if len(data_array) < 1 : 
@@ -1057,6 +1123,7 @@ class AGLAEFile(object):
                               print("X:", first_x_value,"To",included_x,end=",")
                               sleep(0.02)
                               
+                              
                           else:
                               print("X:", last_x_value,"To",included_x,end=",")
                               sleep(0.02)
@@ -1115,9 +1182,8 @@ class AGLAEFile(object):
 
                         else:
                             new_coord_x = np.delete(new_coord_x, 0)
-                            #new_coord_x = np.flip(new_coord_x)
                             new_coord_y = np.delete(new_coord_y, 0)
-                            #new_coord_y = np.flip(new_coord_y)
+
                             adc2 = np.delete(adc1[0], 0)
                             adc3 = np.flip(adc2)
                             del adc1
@@ -1129,19 +1195,24 @@ class AGLAEFile(object):
                                 range_histo = (p2 - p1) + 1
                             else:
                                 range_histo = 1
-                        
+                        if num_line_adc == 4:
+                            nb_event_x0 = nb_event_x0 + len(adc3)
+
                         if range_histo < 0:
                             print('error range_histo') 
                         if range_histo==1:
                            H1, xedges, yedges= np.histogram2d(new_coord_y,adc3,bins=(nb_column,nbcanaux),range= ({0, nb_column-1},{0, nbcanaux-1}))
                         
                         else:
+                            # H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc3),
+                            #                        range=({0, nb_column-1}, r1, {0, nbcanaux-1}),
+                            #                        bins=(nb_column, range_histo, nbcanaux))
                             H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc3),
-                                                   range=({0, nb_column-1}, r1, {0, nbcanaux-1}),
+                                                   range=({0, nb_column}, r1, {0, nbcanaux}), 
                                                    bins=(nb_column, range_histo, nbcanaux))
-                       
-                    
-                       
+
+        
+                                    
                         if croissant == True:
                             ind_1 = first_x_value
                             ind_2 = included_x + 1 # Numpy array exclu le dernier indice
@@ -1171,14 +1242,17 @@ class AGLAEFile(object):
                                 cube_one_pass_gamma20[0][0:, int(next_x_value[num_line_adc]),0:] = H1
                             else:
                                 cube_one_pass_gamma20[0][0:,first_x_value:last_x_value, 0:] = H1
+                                cube_one_pass_gamma20[0][0:,ind_1:ind_2, 0:] = H1
 
                         elif num_line_adc == 11:
                             if range_histo == 1:
                                 cube_one_pass_gamma70[0][0:, first_x_value,0:] = H1
                             else:
-                                cube_one_pass_gamma70[0][0:,first_x_value:last_x_value, 0:] = H1
-                    
-
+                               # cube_one_pass_gamma70[0][0:,first_x_value:last_x_value, 0:] = H1
+                                cube_one_pass_gamma70[0][0:,ind_1:ind_2, 0:] = H1
+                               
+                
+                      
                         if range_histo != 1 and croissant == True:
                             next_x_value[num_line_adc] = last_x_value
                         else:
@@ -1220,9 +1294,8 @@ class AGLAEFile(object):
                         AGLAEFile.feed_hdf5_map(data, path_lst, detector, num_pass_y,_dict_adc_metadata_arr[num_line_adc])
                         
                     AGLAEFile.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,_dict_adc_metadata_arr)
-                
+                    print('\n')
 
-                print("\n")
 
 
 @staticmethod
@@ -1419,13 +1492,13 @@ def read_cfg_adc(path=None):
 def images_to_hdf5(path_ascii:str, dict_metadata_global:dict):
     '''Fonction pour lire les images du dossier Screen_capture et les mettre dans un fichier HDF5'''
     head_tail = os.path.split(path_ascii)# Split le Path et le fichier
-    dateacq =  dict_metadata_global["filename"]
+    dateacq =  dict_metadata_global["filename"] #En général la date acquisition -> 20250105''
     num_analyse = dict_metadata_global["num analyse"]
     type_hdf5 = dict_metadata_global["type analyse"] # OBJ ou STD
     projetacq = dict_metadata_global["prj"]
     hdf5_group = dateacq + "_" + num_analyse + "_" + type_hdf5
     _path_image_dir = os.path.join(head_tail[0], 'Screen_capture')
-    path_image = os.path.join(_path_image_dir,dateacq + "_" +num_analyse)
+    path_image = os.path.join(_path_image_dir,dateacq + "_" + num_analyse)
     list_image, image_video = get_images_by_base_name(path_image)
     list_hdf5 = []
     #hdf5_file = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + type_hdf5 + ".hdf5")
@@ -1453,7 +1526,7 @@ def ascii_to_hdf5(path_ascii:str, dict_metadata_global:dict, dict_adc_metadata_a
     head_tail = os.path.split(path_ascii)# Split le Path et le fichier
     objetacq =  dict_metadata_global["obj"]
     projetacq = dict_metadata_global["prj"]
-    dateacq =  dict_metadata_global["filename"]
+    dateacq =  dict_metadata_global["filename"] #En général la date acquisition -> 20250105''
     num_analyse = dict_metadata_global["num analyse"]
     type_hdf5 = dict_metadata_global["type analyse"] # OBJ ou STD
     hdf5_group = dateacq + "_" + num_analyse + "_" + type_hdf5
@@ -1469,14 +1542,18 @@ def ascii_to_hdf5(path_ascii:str, dict_metadata_global:dict, dict_adc_metadata_a
     if type_hdf5 == 'STD':                                     
         if not os.path.exists(hdf5_file_obj):   
             AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group)
+            AGLAEFile.metadata_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global)
         if not os.path.exists(hdf5_file_std):  
             AGLAEFile.create_empty_prj_hdf5(hdf5_file_std,hdf5_group)
+            AGLAEFile.metadata_prj_hdf5(hdf5_file_std,hdf5_group,dict_glob_metadata=dict_metadata_global)
         list_hdf5 = [hdf5_file_obj,hdf5_file_std]
     else: # only OBJ
         hdf5_file_std = "none" 
-        AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group) 
+        #AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global)
+        AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group)
+        AGLAEFile.metadata_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global) 
         list_hdf5 = [hdf5_file_obj]
-        
+
 
     for spe in spectra_aglae:
         _path_spe=os.path.join(head_tail[0],spe)
@@ -1534,7 +1611,8 @@ def read_ascii_spectra_2column(path_ascii:str):
 
 
 def get_images_by_base_name(path_image):
-    '''Retourne les fichiers screen_capture  et capture video correspondant à un nom de base'''
+    '''Retourne les fichiers screen_capture  et capture video correspondant à un nom de base (ex:"20250225_0001*")'''
+    
     head_tail = os.path.split(path_image)# Split le Path et le fichier
     destfile = head_tail[1].split(".")
     # Utilisez glob pour trouver les fichiers correspondants
@@ -1569,8 +1647,11 @@ def main():
     if len(sys.argv) < 2:
         print("Usage:  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
         #_path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
-        _path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
+       # _path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
+        _path_lst ="C:\\Data\\2025\\Lst_2025\\20250206_0008_OBJ_AGLAE_IBA.lst"
+        _path_ascii = "NULL"
         _path_ascii = "C:\\Data\\20220725_Renne-provenance\\20220725_Renne-provenance\\20220725_0001_std_RENNE-PROV_IBA.x0"
+        _fnct = "MAPS"
         _fnct = "SPECTRA"
     else:
         _fnct = str.upper(lst_arg[1])
