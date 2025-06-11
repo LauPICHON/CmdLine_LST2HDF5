@@ -1,0 +1,2 @@
+1 - Lancer cmd en administrateur
+2 - pyinstaller cmdLine_lst_vector.py -F
