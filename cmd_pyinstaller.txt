@@ -1,2 +1,5 @@
 1 - Lancer cmd en administrateur
 2 - pyinstaller cmdLine_lst_vector.py -F
+--add-data="pathvers.ui;." --windowed 
+
+pyinstaller --onefile --add-data="GUI_LSTToHDF5_vector_2024.ui;." --windowed --add-data="config_adc.ini;." --windowed cmdLine_lst_vector.py

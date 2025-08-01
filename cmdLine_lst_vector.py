@@ -1,6 +1,7 @@
 import h5py, re
 import numpy as np
 import sys, os
+import shutil
 import threading
 from datetime import datetime
 from time import perf_counter
@@ -8,14 +9,26 @@ import configparser
 from time import sleep
 import fnmatch
 from PIL import Image
+#import EdfFile # Import EdfFile for EDF file handling
+from PyPIX_IO import EDFStack # Import EDFStack for EDF stack handling
 
-class AGLAEFile(object):
+class AGLAEfunction(object):
     _FILE_LOCK_1 = threading.Lock()
 
     def __init__(self):
         self.path_config_file = "config.ini"
         self.detector = "LE0"
         self.config_adc_all = {}
+
+    @staticmethod
+    def ibil_To_hdf5(path_edf, detname, path_lst, adc_metadata_arr):
+        """Write data to HDF5 file from a .edf file."""
+        metadata_one_adc= adc_metadata_arr[12]  # Assuming 12 is the index for IBIL metadata
+        #edfout = EdfFile(edfpath)
+        stack = EDFStack.EDFStack()
+        stack.loadIndexedStack(path_edf)
+        AGLAEfunction.feed_hdf5_map(stack.data, path_lst, "IBIL", 0, metadata_one_adc)
+
 
     @staticmethod
     def save_hdf5_antoine(filename, points_map, spectrums_list, group_name="XRF_Analysis", dataset_name="dataset"):
@@ -209,10 +222,8 @@ class AGLAEFile(object):
 
             if num_scan_y != 0:
                     nxData = h5file[f'{group_name}/maps']
-                    #nxData = h5file[f'{group_name}']
                     nxData.resize((nxData.shape[0] + mydata.shape[0],nxData.shape[1] ,nxData.shape[2]))
                     nxData[-mydata.shape[0]:,0:, :] = mydata
-                 
             else:
                     try:
                         del h5file[f'{group_name}']
@@ -222,11 +233,35 @@ class AGLAEFile(object):
                     dset = nxData.require_dataset('maps', data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
                     for exp_attr in dict_metadata_one_adc:
                         dset.attrs[exp_attr] = dict_metadata_one_adc[exp_attr]
-
                         
                     #dset = h5file.require_dataset(group_name, data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
         h5file.close()
 
+    @staticmethod
+    def search_ibil_folder(_path_ascii:str):
+        """Search for the IBIL folder in the given path."""
+        head_tail = os.path.split(_path_ascii)
+        root_name = str.split(head_tail[1], sep='_')
+        edf_folder = root_name[0] + "_" + root_name[1] + "_EDF"
+        
+        _path_ibil = os.path.join(head_tail[0], "IBIL")
+        ibil_folder_founded = False
+        if not os.path.exists(_path_ibil):
+            print(f"Path does not exist: {_path_ibil}")
+            return False,"none"
+        else:
+            print(f"Searching for IBIL folder in: {_path_ibil}")
+
+            for root, dirs,files in os.walk(_path_ibil):
+                for dir_name in dirs:
+                    list_files_edf = fnmatch.filter(os.listdir(os.path.join(root, dir_name)), '*.edf')
+                    if edf_folder in dir_name.upper():
+                        path_edf= head_tail[0] + os.sep +"IBIL"+ os.sep + dir_name + os.sep + list_files_edf[0]
+                        return True, path_edf
+
+        if not ibil_folder_founded:
+            print("IBIL folder not found.")
+        return ibil_folder_founded,"none"
 
     @staticmethod
     def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y,_dict_adc_metadata_arr):
@@ -254,14 +289,17 @@ class AGLAEFile(object):
                 metadata_one_adc = _dict_adc_metadata_arr[0]
             
             detector_name = ret_adc_name(num_det)
-
-            AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
-            AGLAEFile.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
+            mysum1 = np.sum(data, axis=0)    # Somme des lignes
+            mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
+            mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
+            if mysum1 > 0:
+                AGLAEfunction.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
+            
 
     @staticmethod
-    def write_hdf5_metadata(Pathfile, dict_glob_metadata):
+    def write_hdf5_metadata(Path_lst, dict_glob_metadata):
         # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
-        head_tail = os.path.split(Pathfile)# Split le Path et le fichier
+        head_tail = os.path.split(Path_lst)# Split le Path et le fichier
         destfile = head_tail[1].split(".")
         newdestfile = destfile[0] + ".hdf5"
         index_iba= destfile[0].find("_IBA_")
@@ -448,84 +486,96 @@ class AGLAEFile(object):
             
                 if indexadc == 0 and "REPORT-FILE from  written" in str(tmpheader): 
                     para = str.split(str(tmpheader), sep='written')
-                    dict_metadata_global["timestamp"]= AGLAEFile.clean_text(para[1])
+                    dict_metadata_global["timestamp"]= AGLAEfunction.clean_text(para[1])
 
                 if "cmline1=" in str(tmpheader): # Nom detecteur
                     para = str.split(str(tmpheader), sep='=')
-                    text_adc_name = AGLAEFile.clean_text(para[1])
+                    text_adc_name = AGLAEfunction.clean_text(para[1])
                     text_adc_name= text_adc_name.upper()
                     if text_adc_name in det_aglae:
                         dict_metadata["adc name"]= text_adc_name
                     else:
-                        dict_metadata["adc name"]= "OFF"
+                        dict_metadata["adc name"]= "det. OFF"
                     
 
                     
 #cmline2= detector:SDD Ketek ,dia:50mm2 ,window:4um Be, S/N:xxxxx, Angle:50° 
 #cmline2= detector:pips ,dia:50mm2 ,window:4um Be, S/N:xxxxx, Angle:50° 
 
-                if "DETECTOR:" in str.upper(tmpheader): # Info detecteur
+                if "DET:" in str.upper(tmpheader): # Info detecteur
                     para = str.split(str(tmpheader), sep='=')
                     para2 = str.split(para[1], sep=',') # 
                     par_det= str.split(para2[0], sep=':')
                     for i, text in enumerate(para2):
-                        text = AGLAEFile.clean_text(text)
+                        text = AGLAEfunction.clean_text(text)
                         text2 = str.split(text, sep=':')[1]
-                        if "DETECTOR" in str(text): 
+                        if "DET:" in str.upper(text):
                             dict_metadata["det. type"] = str.split(text, sep=':')[1]
-                        if "ACTIVE AREA" in str(text):
+                        if "AREA:" in str.upper(text):
                             dict_metadata["det. active area"]= str.split(text, sep=':')[1]
-                        if "THICKNESS" in str(text):
+                        if "TCK:" in str.upper(text):
                             dict_metadata["det. thickness"] =str.split(text, sep=':')[1]
-                        if "WINDOW" in str(text):
+                        if "WIN:" in str.upper(text):
                             dict_metadata["det. entrance window"] =str.split(text, sep=':')[1]
-                        if "ANGLE"in str(text) :
+                        if "ANGLE:"in str.upper(text) :
                             dict_metadata["det. angle"] =str.split(text, sep=':')[1]
-                        if  "S/N" in str(text): 
+                        if  "S/N:" in str.upper(text): 
                             dict_metadata["det. S/N"] =str.split(text, sep=':')[1]
                 
                 if "FILTER:" in str.upper(tmpheader): 
-                    para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
-                    dict_metadata["filter"] =text
-                
-                               
+                    para = str.split(str(tmpheader), sep='=')
+                    para2 = str.split(para[1], sep=',')
+                    #para = str.split(str(tmpheader), sep=':')
+                    #text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
+                    for i, text in enumerate(para2):
+                        text = AGLAEfunction.clean_text(text)
+                        #dict_metadata["filter"] =text
+                        if "WIN:" in str.upper(text):
+                            dict_metadata["det. entrance window"] =str.split(text, sep=':')[1]
+                        if "ANGLE:"in str.upper(text) :
+                            dict_metadata["det. angle"] =str.split(text, sep=':')[1]
+                        if "FILTER:"in str.upper(text) :
+                            dict_metadata["det. filter"] =str.split(text, sep=':')[1]
+                        if  "S/N:" in str.upper(text): 
+                            dict_metadata["det. S/N"] =str.split(text, sep=':')[1]
+
                 if "CALIBRATION:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])
+                    text = AGLAEfunction.clean_text(para[1])
                     dict_metadata["calibration"] = text
 
                 if "INSTITUTION:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
+                    text = AGLAEfunction.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
                     dict_metadata_global["institution"] = text
 
-                if "ANALYSE DESCRIPTION:" in str.upper(tmpheader):
+                if "SAMP. INFO:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])
+                    text = AGLAEfunction.clean_text(para[1])
                     dict_metadata_global["analyse description"] = text
 
                 if "REF ANALYSE:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])
-                    if text == "OBJ":
-                        dict_metadata_global["ref. object"] = text
-                    else:
-                        dict_metadata_global["ref. standard"] = text
+                    text = AGLAEfunction.clean_text(para[1])
+                   # if "STANDARD:" in str.upper(text): #if text == "satndar":
+                    dict_metadata_global["ref. analyse"] = text
+                   # else:
+                    #    dict_metadata_global["ref. object"] = text
+                        
 
                 if "USERNAME:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])  
+                    text = AGLAEfunction.clean_text(para[1])  
                     dict_metadata_global["username"] =text
 
                 if "PRJ EUPHROSYNE:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])  
+                    text = AGLAEfunction.clean_text(para[1])  
                     dict_metadata_global["prj euphrosyne"] =text
 
                 if "OBJ EUPHROSYNE:" in str.upper(tmpheader):
                     para = str.split(str(tmpheader), sep=':')
-                    text = AGLAEFile.clean_text(para[1])  
+                    text = AGLAEfunction.clean_text(para[1])  
                     dict_metadata_global["obj euphrosyne"] =text
                     if str.upper (text) == "STANDARD":
                         dict_metadata_global["target type"] = "standard"
@@ -538,7 +588,7 @@ class AGLAEFile(object):
                     para2 = str.split(para2[1], sep=",")
                     map_info = ["map size x (um)","map size y (um)","pixel size x (um)","pixel size y (um)","pen size (um)","dose/column","dose" ]
                     for i, text in enumerate(para2): 
-                        text = AGLAEFile.clean_text(text)
+                        text = AGLAEfunction.clean_text(text)
                         para2[i] = text
                         dict_metadata_global[map_info[i]] = text
                         
@@ -551,7 +601,7 @@ class AGLAEFile(object):
                     beam_info = ["particle", "beam energy"]
 
                     for i, text in enumerate(para2): 
-                        text = AGLAEFile.clean_text(text)
+                        text = AGLAEfunction.clean_text(text)
                         dict_metadata_global[beam_info[i]] = text
                                      
              
@@ -564,7 +614,17 @@ class AGLAEFile(object):
                 
                 fin_header = '[LISTDATA]' in str.upper(tmpheader) or t > 5000
                 # header1.append(tmpheader)
-        
+        # Info IBIL en constant
+        dict_metadata= {}
+        dict_metadata["spectro name"] = "IBIL"
+        dict_metadata["calibration"] = "MCA a= 0.801, MCA b= 189.0, MCA c= 0"
+        dict_metadata["spectro. S/N"]= "unknown"
+        dict_metadata["spectro. angle"] = "45"
+        dict_metadata["spectro. slit size"] = "100 um"
+        dict_metadata["fiber diameter"] = "1000 um"
+        dict_metadata["fiber S/N"] = "unknown"
+        dict_metadata["spectro. type"] = "QE65000 Ocean Optics"
+        dict_adc_metadata_arr[12] = dict_metadata.copy() # GAMMA
         return dict_adc_metadata_arr,dict_metadata_global
     
     def clean_text(text):
@@ -575,8 +635,7 @@ class AGLAEFile(object):
         text = text.strip()
                         
         return text
-    
-   
+       
     def return_adc_adjusted_index(data_array_previous,data_array):
 
         data_array = data_array[data_array != 65535]
@@ -852,7 +911,7 @@ class AGLAEFile(object):
 
     def extract_lst_vector(path_lst:str, dict_para_global:dict,_dict_adc_metadata_arr:dict):
         pathlst1 = path_lst
-        _dict_channel_adc,_dict_config_mpawin_adc,_dict_combined_adc = read_cfg_adc()
+        _dict_channel_adc,_dict_config_mpawin_adc,_dict_combined_adc = read_cfg_adc(resource_path("config_lst2hdf5.ini"))
         print(_dict_channel_adc)
        
         
@@ -902,14 +961,12 @@ class AGLAEFile(object):
                 allheader = allheader + tmp1.replace("\\r\\n", '')
                 t+=1    
                 size_lst -= len(tmp1) - 2
-                if "condition" in str.upper(tmpheader):
-                    toto = 1
+                # if "condition" in tmpheader.decode('utf-8', errors='ignore'):
+                #     toto = 1
               
                 fin_header = tmpheader == b'[LISTDATA]\r\n' or tmpheader == b'[LISTDATA]\n' or t > 5000
                 # header1.append(tmpheader)
-
-        
-           
+   
             pensize = int(dict_para_global["pen size (um)"])
             nb_pass_y = int(sizeY / (pensize / int(dict_para_global["pixel size y (um)"])))
             nb_column_total = sizeX*nb_pass_y
@@ -918,10 +975,10 @@ class AGLAEFile(object):
    
             size_lst = int(size_lst)  # car on lit des Uint16 donc 2 fois moins que le nombre de bytes (Uint8)
             size_block = size_lst
-            size_one_scan = size_lst / nb_pass_y
-            size_4_column_scan = (size_one_scan / (sizeX)) * 4 #/(sizeX/40))  # taille 4 column
+            size_one_scan = size_lst / (nb_pass_y+1)
+            size_4_column_scan = (size_one_scan / (sizeX)) * 2 #/(sizeX/40))  # taille 4 column
             size_block = int(size_4_column_scan)
-            size_block_big = int(size_4_column_scan) * 4
+            size_block_big = int(size_4_column_scan) * 2
             large_map = False
 
             if size_lst > 1000000 and sizeX > 40:
@@ -1019,19 +1076,18 @@ class AGLAEFile(object):
                     
                     nb_32768 = np.count_nonzero(data_array == 32768)
                     nb_total_event = nb_total_event + nb_32768
-                    adjusted_indices, data_array ,shape_data_array = AGLAEFile.return_adc_adjusted_index (data_array_previous, data_array)
+                    adjusted_indices, data_array ,shape_data_array = AGLAEfunction.return_adc_adjusted_index (data_array_previous, data_array)
                     adc_values = np.array(data_array[adjusted_indices])
                     if len(data_array) < 1 : 
                         exit 
 
                     nb_read_total += (nb_byte_to_read * 2) + len(data_array_previous)
                     t1 = perf_counter()
-
                     
                     #array_adc = [0,4]
                     max_size_x = ret_range_bytes(sizeX - 1)
                     max_size_y = ret_range_bytes(sizeY - 1)
-                    conditionXY= AGLAEFile.get_X_Y_condition(adc_values,ADC_X,ADC_Y)
+                    conditionXY= AGLAEfunction.get_X_Y_condition(adc_values,ADC_X,ADC_Y)
                     nb_adc_not_found = 0
                     last_indx_x = 0
                    
@@ -1048,12 +1104,12 @@ class AGLAEFile(object):
                         # adc2read = ret_num_adc(self.detector)
                         t0 = perf_counter()
                         # Return 
-                        non_zero_indices = AGLAEFile.return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc,conditionXY)
+                        non_zero_indices = AGLAEfunction.return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc,conditionXY)
                         if non_zero_indices[0] == -1 or len(non_zero_indices) < 50:
                             nb_adc_not_found +=1
                             continue
                         adc_words = data_array[non_zero_indices]
-                        indice_val_to_read = AGLAEFile.return_val_to_read(adc_words,non_zero_indices)
+                        indice_val_to_read = AGLAEfunction.return_val_to_read(adc_words,non_zero_indices)
 
                         coord_x = data_array[indice_val_to_read[ADC_X, :]]  
                         #coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
@@ -1064,55 +1120,61 @@ class AGLAEFile(object):
                         #      coord_y = np.flip(coord_y)
                              
                         #if end_lst_file_found == False :
-                        coord_x, coord_y ,error= AGLAEFile.clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x,croissant) # del 
-                                             
-                        if coord_x[0] !=0: 
-                            x_zero_error = np.where(coord_x ==0) # Recherche si des X=0  présents dans X !=0
+                        coord_x, coord_y ,error= AGLAEfunction.clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x,croissant) # del 
+                        max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
+                        change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
+                        
+                        if coord_x[0] !=0 and change_line == False: # coord_X =0 anormal si changement de ligne je garde les zeros (Y max sert de delimiateteur et non X)
+                            x_zero_error = np.where(coord_x ==0) # Recherche si des X=0 présents dans X !=0
                         else:
                             x_zero_error = np.zeros((1, 1), dtype=np.uint32)
 
-                        max_val_y_lue,min_val_y_lue = AGLAEFile.read_min_max_y(coord_y)
-                        first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+                        max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
+                        first_x_value, last_x_value = AGLAEfunction.read_range_x(coord_x, croissant)
                         #first_x_value, last_x_value = AGLAEFile.range_x(coord_x, croissant)
                       
                         if first_x_value !=0 and len(x_zero_error[0]) > 1: #coord_X =0 anormal
                             coord_x = np.delete(coord_x, x_zero_error)
                             coord_y = np.delete(coord_y, x_zero_error)
-                            first_x_value, last_x_value = AGLAEFile.read_range_x(coord_x, croissant)
+                            first_x_value, last_x_value = AGLAEfunction.read_range_x(coord_x, croissant)
                                 
-
                         change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
                         val_x_fin_map = get_x_end_line_scan(croissant,sizeX) # retourne val final 0 ou SizeX-1
                         
                         if change_line == False:
                             fin_lst = look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,last_x_value)
+                        elif change_line == True:
+                            if croissant:
+                                last_x_value = sizeX - 1
+                            else:
+                                first_x_value = 0
                         else:
                             fin_lst = False # change line -> fin lst impossible
 
                        
                        # Dertermine la dernière valeur X
-                        included_x = AGLAEFile.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
-                        columns= AGLAEFile.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
-                        included_x = AGLAEFile.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                        included_x = AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                        columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                        included_x = AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
                                                    
                         if last_x_value < first_x_value and croissant==True: # Cas trop lus de columns
                             last_x_value = sizeX-1
-                            columns= AGLAEFile.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
                         
                         if first_x_value > last_x_value and croissant==False: # Cas trop lus de columns
                             first_x_value = 0
-                            columns= AGLAEFile.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
            
                        
                         if end_lst_file_found == True or fin_lst == True:
                                  indice_last = len(coord_y) -1
                         else:
                             if columns == True and change_line == False: # plus de 1 colonne
-                                indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
+                                indice_last = AGLAEfunction.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
                             elif columns == False and change_line == False: # 1 Colonne
-                                indice_last = AGLAEFile.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
+                                indice_last = AGLAEfunction.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
                             elif change_line == True:
-                                indice_last = AGLAEFile.read_max_indice_change_colonne(coord_y,y_max_current_scan) #Recherche last_indice avec Y < scan total
+                                indice_last = AGLAEfunction.read_max_indice_change_colonne(coord_y,y_max_current_scan) #Recherche last_indice avec Y < scan total
                                 if croissant == True:
                                     included_x = sizeX-1
                                 else:
@@ -1225,20 +1287,20 @@ class AGLAEFile(object):
 
                         if first_x_value == 0:
                             first_x_value=0
-                        if num_line_adc <=4:
+                        if num_line_adc <=4: # PIXE HE
                             if range_histo == 1:
                                 cube_one_pass_pixe[num_line_adc][:, ind_1, :] = H1
                             else:
                                 cube_one_pass_pixe[num_line_adc][0:,ind_1:ind_2, 0:] = H1
 
-                        elif num_line_adc == 5 or num_line_adc == 6 or  num_line_adc == 7:
+                        elif num_line_adc == 5 or num_line_adc == 6 or  num_line_adc == 7: # RBS ou RBS135 ou RBS150    
                             if range_histo == 1:
                                 cube_one_pass_rbs[num_line_adc - 5][:, ind_1, :] = H1
                             else:
                                 cube_one_pass_rbs[num_line_adc - 5][0:,ind_1:ind_2, 0:] = H1
 
 
-                        elif num_line_adc == 10:
+                        elif num_line_adc == 10: # Gamma20
                             if range_histo == 1:
 
                                 cube_one_pass_gamma20[0][0:, int(next_x_value[num_line_adc]),0:] = H1
@@ -1246,14 +1308,13 @@ class AGLAEFile(object):
                                 cube_one_pass_gamma20[0][0:,first_x_value:last_x_value, 0:] = H1
                                 cube_one_pass_gamma20[0][0:,ind_1:ind_2, 0:] = H1
 
-                        elif num_line_adc == 11:
+                        elif num_line_adc == 11: # Gamma70
                             if range_histo == 1:
                                 cube_one_pass_gamma70[0][0:, first_x_value,0:] = H1
                             else:
                                # cube_one_pass_gamma70[0][0:,first_x_value:last_x_value, 0:] = H1
                                 cube_one_pass_gamma70[0][0:,ind_1:ind_2, 0:] = H1
-                               
-                
+                                               
                       
                         if range_histo != 1 and croissant == True:
                             next_x_value[num_line_adc] = last_x_value
@@ -1263,8 +1324,7 @@ class AGLAEFile(object):
                     if nb_adc_not_found < 9:
                         if first_x_value ==0 and croissant == True:
                             zero_off = True     
-                    
-
+ 
                         if min_last_pos_x_y_in_array < int(shape_data_array):
                             data_array_previous = []
                             data_array_previous = data_array[min_last_pos_x_y_in_array+20:]
@@ -1292,13 +1352,121 @@ class AGLAEFile(object):
                         elif num_line_adc == 11:
                             data = cube_one_pass_gamma70[0]
 
-               
-                        AGLAEFile.feed_hdf5_map(data, path_lst, detector, num_pass_y,_dict_adc_metadata_arr[num_line_adc])
+                        mysum1 = np.sum(data, axis=0)
+                        mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
+                        mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
+                        if mysum1 > 0:
+                            AGLAEfunction.feed_hdf5_map(data, path_lst, detector, num_pass_y,_dict_adc_metadata_arr[num_line_adc])
                         
-                    AGLAEFile.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,_dict_adc_metadata_arr)
+                    AGLAEfunction.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,_dict_adc_metadata_arr)
+                    
+
                     print('\n')
 
+    def ascii_to_hdf5(path_ascii:str, dict_metadata_global:dict,  dict_adc_metadata_arr:np):
+        """Fonction pour lire les fichiers ascii spectra et les mettre dans un fichier HDF5"""
+        head_tail = os.path.split(path_ascii)# Split le Path et le fichier
+        datainname = head_tail[1].split("_")
+        sum_all_x = [0,0,0,0,0]
+    
+        if len(datainname) > 4:
+            _dateacq = datainname[0]
+            _num_analyse = datainname[1]
+            _objetacq = datainname[2]
+            _projetacq = datainname[3]
+        else:
+            _dateacq = "?"
+            _objetacq = "?"
+            _projetacq = "?"
+    
+        type_hdf5 = dict_metadata_global["target type"] # OBJ ou STD
+        hdf5_group = _dateacq + "_" + _num_analyse + "_" + dict_metadata_global["ref. analyse"] #_type_hdf5
+        list_spectra_aglae , file_x0 = list_spectra_with_same_name(path_ascii) #" Liste des fichiers spectra .X0, .x1, .x2, .x3, .x4, ...."
 
+        gupix_acq_time, real_dose = gupix_metadata_acq_time_and_dose(os.path.join(head_tail[0],file_x0[0])) #"""Récupère les métadonnées du fichier GUPIX"""
+        dict_metadata_global["acquisition time (sec.)"] = gupix_acq_time
+        dict_metadata_global["dose"] = real_dose
+        dict_metadata_global.update(dict_metadata_global) # Met à jour les métadonnées globales avec les métadonnées GUPIX
+            
+
+        print(type_hdf5)
+        #hdf5_file_obj = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + 'type_hdf5' + ".hdf5")
+        hdf5_file_obj = os.path.join(head_tail[0],_dateacq + "_" + _projetacq + "_" + "batch_IBA" + ".hdf5")
+        hdf5_file_std = os.path.join(head_tail[0],_dateacq + "_" + _projetacq + "_" + "standard_IBA" + ".hdf5")
+
+
+        if str.upper(type_hdf5) == 'STANDARD' or str.upper(type_hdf5) == 'STD': # OBJ + STD
+            AGLAEfunction.create_empty_prj_hdf5(hdf5_file_std,hdf5_group)
+            AGLAEfunction.metadata_prj_hdf5(hdf5_file_std,hdf5_group,dict_glob_metadata=dict_metadata_global)
+            list_hdf5 = [hdf5_file_std]
+        else: # only OBJ
+            hdf5_file_std = "none" 
+            #AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global)
+            AGLAEfunction.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group)
+            AGLAEfunction.metadata_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global) 
+            list_hdf5 = [hdf5_file_obj]
+
+        metadata_one_adc = dict_adc_metadata_arr[0]
+        list_ext = ["X1", "X2", "X3", "X4", "X0", "R8", "R135", "R150", "Coord_X", "Coord_Y", "G20", "G70","IL0"]
+        list_ext_combined = ["X10", "X11", "X12", "X13", "X14", "X1234", "X34", "X23"]
+        
+        for spe in list_spectra_aglae: # list des fichiers ascii spectra .X0, .x1, .x2, .x3, .x4, ....
+            _path_spe=os.path.join(head_tail[0],spe)
+            str_ext_spe = str.upper(spe.split(".")[1]) #'Recupère extension du fichier'       
+            
+            try:    
+                adc_indx= list_ext.index(str_ext_spe)
+            except:
+                adc_indx = -1
+                #print("Not found in list_ext")
+            
+            if adc_indx == -1 : # Si pas trouvé dans la liste des spectres alors combined X'
+                try:
+                    metadata_one_adc={}
+                    G_header = dict_gupix_metadata["gupix header"]
+                    metadata_one_adc = build_metadata_combined(str_ext_spe,sum_all_x,G_header)
+                                                
+                except:
+                    metadata_one_adc["Det. type"] = 'Extension not found'
+                                            
+            else:
+                if adc_indx < 5:
+                    metadata_one_adc = dict_adc_metadata_arr[adc_indx]
+                    dict_gupix_metadata = gupix_metadata_from_path(_path_spe)
+                    metadata_one_adc.update(dict_gupix_metadata)
+                    sum_all_x[adc_indx] = int(metadata_one_adc["spectra sum"])
+                else:
+                    metadata_one_adc = {}
+                    metadata_one_adc = dict_adc_metadata_arr[adc_indx]
+                    #metadata_one_adc["acquisition time (sec.)"] = gupix_acq_time
+                    #metadata_one_adc.update(dict_gupix_metadata)
+                    
+            try:
+                np_data_spectre = read_ascii_spectra(_path_spe,dict_metadata_global)
+            except:
+                np_data_spectre = read_ascii_spectra_2column(_path_spe)
+
+            for local_hdf5_file in list_hdf5:
+                AGLAEfunction.feed_existing_hdf5(filename= local_hdf5_file, data= np_data_spectre, group_name= hdf5_group, dataset_name= str_ext_spe, metadata_one_adc= metadata_one_adc) 
+
+    def copy_hdf5_to_folder(hdf5_file, path_ascii):
+        """Copie un fichier HDF5 vers un dossier de destination."""
+        head_tail = os.path.split(path_ascii)  # Split le Path et le fichier
+        dest_folder = os.path.join(head_tail[0], "HDF5_maps_files")  
+        dest_file = dest_folder + os.sep + os.path.basename(hdf5_file)  # Nom du fichier HDF5 sans le chemin
+
+        if not os.path.exists(dest_folder):
+            os.makedirs(dest_folder)
+        shutil.copy(hdf5_file, dest_file)
+
+    @staticmethod
+    def create_hdf5_filename(path_lst):
+        """Crée le chemin du fichier HDF5 à partir du chemin du fichier LST."""
+        head_tail = os.path.split(path_lst)  
+        # Split le Path et le fichier
+        destfile = head_tail[1].split(".")
+        path_hdf5 = destfile[0] + ".hdf5"
+        return path_hdf5
 
 @staticmethod
 def getSize(fileobject):
@@ -1354,6 +1522,7 @@ def look_if_next_line(max_val_y_lue,y_scan_total):
    
 @staticmethod          
 def ret_num_adc(detector):
+   """Retourne le numéro ADC en binaire correspondant au nom du détecteur."""
    switcher = {
                 "LE0":  0b0000000000010000, #2A
                 "HE1":  0b0000000000000001,
@@ -1370,7 +1539,54 @@ def ret_num_adc(detector):
    return switcher.get(detector)
 
 @staticmethod
+def get_indx_sum(str_ext_spe):
+    """Retourne les indices à utiliser pour la somme des spectres combinés."""
+    # Définition des variables représentant les indices à sélectionner
+    switcher = {
+                "X10":  [0, 1, 2, 3], #2A
+                'X1234' : [0, 1, 2, 3],
+                'X34' : [2, 3],
+                'X23' : [1, 2],
+                'X12' : [2, 3],
+                'X13' : [0, 2],
+                "X11":  [0, 1], #2A
+                "X14":  [0, 3], #2A
+                "X123": [0, 1, 2], #2A
+                "X134": [0, 2, 3], #2A
+                }
+    return switcher.get(str_ext_spe)
+
+@staticmethod
+def sum_by_indices(arr, indices):
+    """Somme les éléments d'un tableau selon les indices spécifiés."""
+    sum1 =  sum(arr[i] for i in indices)
+    return sum1
+
+@staticmethod
+def build_metadata_combined(str_ext_spe, sum_all_x,G_header):
+    """Construit les métadonnées combinées à partir des données fournies."""
+    metadata_one_adc = {}
+    #indx_combined = list_ext_combined.index(str_ext_spe)
+    indx_to_sum = get_indx_sum(str_ext_spe)
+    sum_x2 = sum_by_indices(sum_all_x, indx_to_sum)
+
+    # Remplace avec la bonne sum
+    parts = G_header.split(' ')
+    parts[4] = str(sum_x2)
+    new_header = ' '.join(parts)
+    metadata_one_adc["spectra sum"] = str(sum_x2)
+    metadata_one_adc["gupix header"] = new_header
+    metadata_one_adc["Det. type"] = "SDD Ketek"
+    indices_str = " + ".join(f"X{i+1}" for i in indx_to_sum)
+    metadata_one_adc["Combination of "] = f"detector {indices_str}" #str_ext_spe
+    metadata_one_adc["Det. filter"] = "See Combination of"
+    metadata_one_adc["Det. thickness"] = "See Combination of"
+
+    return metadata_one_adc
+
+@staticmethod
 def ret_adc_name(num_adc):
+   """"""
    switcher = {
                0: "X1",
                1: "X2",
@@ -1394,6 +1610,7 @@ def ret_adc_name(num_adc):
    return switcher.get(num_adc)
 
 def ret_combined_name(ext_file_spe):
+   """Retourne le nom de la combinaison des détecteurs"""
    switcher = {
                "X10": "X1+X2",
                "X11": "X1+X2",
@@ -1409,7 +1626,6 @@ def ret_combined_name(ext_file_spe):
    return switcher.get(ext_file_spe)
 
 
-
 @staticmethod
 def ret_range_bytes(val):
     """Donne n°bits max pour valeur"""
@@ -1418,52 +1634,21 @@ def ret_range_bytes(val):
             nombre_bytes = bits
     return  2**(nombre_bytes+1) - 1
 
-class HDF5Store(object):
-    '''Simple class to append value to a hdf5 file on disc (usefull for building keras datasets)'''
-    
+@staticmethod    
+def resource_path(relative_path):
+    """Obtenir le chemin absolu vers une ressource, fonctionne pour dev et build PyInstaller"""
+    try:
+        base_path = sys._MEIPASS
+    except AttributeError:
+        base_path = os.path.abspath(".")
 
-    def __init__(self, datapath, dataset, shape, dtype=np.float32, compression="gzip", chunk_len=1):
-        self.datapath = datapath
-        self.dataset = dataset
-        self.shape = shape
-        self.i = 0
+    return os.path.join(base_path, relative_path)
 
-        with h5py.File(self.datapath, mode='w') as h5f:
-            self.dset = h5f.create_dataset(
-                dataset,
-                shape=(0,) + shape,
-                maxshape=(None,) + shape,
-                dtype=dtype,
-                compression=compression,
-                chunks=(chunk_len,) + shape)
-
-    def append(self, values):
-        with h5py.File(self.datapath, mode='a') as h5f:
-            dset = h5f[self.dataset]
-            dset.resize((self.i + 1,) + self.shape)
-            dset[self.i] = [values]
-            self.i += 1
-            h5f.flush()
-
-
-
-# def main(args):
-#     print(args[0])
-
-# [NB_CHANNEL]
-# PIXE = 2048
-# RBS = 512
-# GAMMA20 = 2048
-# GAMMA70 = 4096
-
-    
-
-
-
+@staticmethod    
 def read_cfg_adc(path=None):
         if not path: path = 'config_lst2hdf5.ini'
         config = configparser.ConfigParser()
-        config.read(path)
+        config.read(resource_path(path))  # Utilise resource_path pour trouver le fichier de configuration
         config.sections()
         dict_config_mpawin_adc = {}
         dict_channel_adc ={}
@@ -1492,11 +1677,12 @@ def read_cfg_adc(path=None):
             
         return dict_channel_adc,dict_config_mpawin_adc,dict_combined_adc
 
-
+@staticmethod
 def images_to_hdf5(path_ascii:str, dict_metadata_global:dict):
     '''Fonction pour lire les images du dossier Screen_capture et les mettre dans un fichier HDF5'''
     head_tail = os.path.split(path_ascii)# Split le Path et le fichier
     datainname = head_tail[1].split("_")
+
     if len(datainname) > 4:
         _dateacq = datainname[0]     #En général la date acquisition -> 20250105''
         _num_analyse = datainname[1] # Numéro de l'analyse
@@ -1510,9 +1696,9 @@ def images_to_hdf5(path_ascii:str, dict_metadata_global:dict):
     # num_analyse = dict_metadata_global["num analyse"]
     # projetacq = dict_metadata_global["prj"]
 
-    _type_hdf5 = dict_metadata_global["target type"] # object ou standard
+    _type_hdf5 =dict_metadata_global["target type"] # object ou standard
 
-    hdf5_group = _dateacq + "_" + _num_analyse + "_" + _type_hdf5
+    _hdf5_group = _dateacq + "_" + _num_analyse + "_" + dict_metadata_global["ref. analyse"] #_type_hdf5
     _path_image_dir = os.path.join(head_tail[0], 'Screen_capture')
     path_image = os.path.join(_path_image_dir,_dateacq + "_" + _num_analyse)
     try: 
@@ -1524,130 +1710,60 @@ def images_to_hdf5(path_ascii:str, dict_metadata_global:dict):
         return  
     
     list_hdf5 = []
-    #hdf5_file = os.path.join(head_tail[0],_dateacq + "_" +_projetacq + "_" + type_hdf5 + ".hdf5")
-    hdf5_file_obj = os.path.join(head_tail[0],_dateacq + "_" +_projetacq + "_" + "GLOBAL_IBA" + ".hdf5")
-    hdf5_file_std = os.path.join(head_tail[0],_dateacq + "_" +_projetacq + "_" + "STD_IBA" + ".hdf5")
+    hdf5_file_obj = os.path.join(head_tail[0],_dateacq + "_" +_projetacq + "_" + "batch_IBA" + ".hdf5")
+    hdf5_file_std = os.path.join(head_tail[0],_dateacq + "_" +_projetacq + "_" + "standard_IBA" + ".hdf5")
 
-    if _type_hdf5 == 'STD':
-        list_hdf5 = [hdf5_file_obj, hdf5_file_std]
+    if str.upper(_type_hdf5) == 'STD' or str.upper(_type_hdf5) == 'STANDARD': # OBJ + STD   
+        list_hdf5 = [hdf5_file_std]
+        hdf5_file_obj = "none"
     else:
         list_hdf5 = [hdf5_file_obj]
         hdf5_file_std = "none"   
 
     for local_hdf5_file in list_hdf5:
         if  list_image != []:
-            AGLAEFile.feed_image_hdf5(filename=local_hdf5_file, image_path=list_image, 
-                                    path_image_dir= _path_image_dir,group_name=hdf5_group)   
+            AGLAEfunction.feed_image_hdf5(filename=local_hdf5_file, image_path=list_image, 
+                                    path_image_dir= _path_image_dir,group_name=_hdf5_group)   
         if image_video != []:
            img_name = _dateacq + "_" + _num_analyse + "_" + "image_area"
-           AGLAEFile.feed_image_video_hdf5(img_name=img_name,filename=local_hdf5_file, path_image_video=image_video, 
-                                           path_image_dir= _path_image_dir, group_name=hdf5_group)
+           AGLAEfunction.feed_image_video_hdf5(img_name=img_name,filename=local_hdf5_file, path_image_video=image_video, 
+                                           path_image_dir= _path_image_dir, group_name=_hdf5_group)
 
-    
-
-def ascii_to_hdf5(path_ascii:str, dict_metadata_global:dict,  dict_adc_metadata_arr:np):
-    """Fonction pour lire les fichiers ascii spectra et les mettre dans un fichier HDF5"""
-    head_tail = os.path.split(path_ascii)# Split le Path et le fichier
-    datainname = head_tail[1].split("_")
-    if len(datainname) > 4:
-        _dateacq = datainname[0]
-        _num_analyse = datainname[1]
-        _objetacq = datainname[2]
-        _projetacq = datainname[3]
-    else:
-        _dateacq = "?"
-        _objetacq = "?"
-        _projetacq = "?"
-
-    # objetacq =  dict_metadata_global["obj"]
-    # _projetacq = dict_metadata_global["prj"]
-    # _dateacq =  dict_metadata_global["dateacq"] #En général la date acquisition -> 20250105''
-    # _num_analyse = dict_metadata_global["num analyse"]
-    type_hdf5 = dict_metadata_global["target type"] # OBJ ou STD
-    hdf5_group = _dateacq + "_" + _num_analyse + "_" + type_hdf5
-    list_spectra_aglae=list_spectra_with_same_name(path_ascii)
-       
-        
-    print(type_hdf5)
-    #hdf5_file_obj = os.path.join(head_tail[0],dateacq + "_" +projetacq + "_" + 'type_hdf5' + ".hdf5")
-    hdf5_file_obj = os.path.join(head_tail[0],_dateacq + "_" + _projetacq + "_" + "global_IBA" + ".hdf5")
-    hdf5_file_std = os.path.join(head_tail[0],_dateacq + "_" + _projetacq + "_" + "standard_IBA" + ".hdf5")
+ 
 
 
-    if type_hdf5 == 'standard' or type_hdf5 == 'STD': # OBJ + STD
-        # if not os.path.exists(hdf5_file_obj):
-        #     AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group)
-        #     AGLAEFile.metadata_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global)
-        if not os.path.exists(hdf5_file_std):  
-            AGLAEFile.create_empty_prj_hdf5(hdf5_file_std,hdf5_group)
-            AGLAEFile.metadata_prj_hdf5(hdf5_file_std,hdf5_group,dict_glob_metadata=dict_metadata_global)
-        list_hdf5 = [hdf5_file_std]
-    else: # only OBJ
-        hdf5_file_std = "none" 
-        #AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global)
-        AGLAEFile.create_empty_prj_hdf5(hdf5_file_obj,hdf5_group)
-        AGLAEFile.metadata_prj_hdf5(hdf5_file_obj,hdf5_group,dict_glob_metadata=dict_metadata_global) 
-        list_hdf5 = [hdf5_file_obj]
-
-    metadata_one_adc = dict_adc_metadata_arr[0]
-    list_ext = ["X1", "X2", "X3", "X4", "X0", "R8", "R135", "R150", "Coord_X", "Coord_Y", "G20", "G70"]
-    list_ext_combined = ["X10", "X11", "X12", "X13", "X14", "X1234", "X34", "X23"]
-    
-    for spe in list_spectra_aglae: # list des fichiers ascii spectra .X0, .x1, .x2, .x3, .x4, ....
-        _path_spe=os.path.join(head_tail[0],spe)
-        str_ext_spe = str.upper(spe.split(".")[1]) #'Recupère extension du fichier'       
-        try:    
-            adc_indx= list_ext.index(str_ext_spe)
-        except:
-            adc_indx = -1
-            #print("Not found in list_ext")
-        
-        if adc_indx == -1 : # Si pas trouvé dans la liste des spectres'
-          try: 
-              indx_combined = list_ext_combined.index(str_ext_spe)
-              metadata_one_adc={}
-              metadata_one_adc["Detector type"] = "SDD Ketek"
-              metadata_one_adc["Combination of "] = str_ext_spe
-              metadata_one_adc["filter"] = "See SDD of this combination"
-              metadata_one_adc["SDD thickness"] = "See SDD of this combination"
-
-          except:
-              metadata_one_adc["Detector type"] = 'Extension not found'
-                                         
-        else:
-            metadata_one_adc = dict_adc_metadata_arr[adc_indx]
-        
-          
-        try:
-            np_data_spectre = read_ascii_spectra(_path_spe)
-        except:
-            np_data_spectre = read_ascii_spectra_2column(_path_spe)
-
-        for local_hdf5_file in list_hdf5:
-            AGLAEFile.feed_existing_hdf5(filename= local_hdf5_file, data= np_data_spectre, group_name= hdf5_group, dataset_name= str_ext_spe, metadata_one_adc= metadata_one_adc) 
                         
         # if type_hdf5 == "STD":
 
         #     AGLAEFile.feed_existing_hdf5(filename= hdf5_file_std, data= np_data_spectre, group_name=hdf5_group, dataset_name = hdf5_dataset)
         # else:
         #     AGLAEFile.feed_existing_hdf5(filename= hdf5_file_obj, data= np_data_spectre, group_name=hdf5_group, dataset_name = hdf5_dataset)
-        
+def search_Dose(header:str):
+    """Search for the dose in the header string"""
+   # str = "2025 06 55252 741 6065686  'KNHLNorth-1-02,1000,1000,50,50,500,40,2000000,Proton , 2999 keV , 40mm He , 50 um Al , OFF , 50 um Al + 20 um Cr , OFF'"
+    par1 = header.split("'")
+    par2 = par1[1].split(',')
+    if len(par2) > 6:   
+        dose = par2[7]  # Dose is the 7th element in the list
+        dose = dose.strip()  # Remove any leading or trailing whitespace
+    else:
+        dose = "0"
+    return dose
 
-def read_ascii_spectra(path_ascii:str):
+     
+def read_ascii_spectra(path_ascii:str, dict_metadata_global:dict=None):
     """Read spectra format GUPIX -> 1 Column"""
     with open(path_ascii) as File_Spectre:
         header1 = File_Spectre.readline()
         header1 = File_Spectre.readline()
         data_spectre = File_Spectre.readlines()
         data_spectre = np.array(data_spectre)
-        data_spectre = data_spectre.astype(np.int32)
-        
-        
+        data_spectre = data_spectre.astype(np.int32)               
     return data_spectre
 
 def read_ascii_spectra_2column(path_ascii:str):
     """Read spectra format SimNRA (RBS) -> 2 Column"""
-    
+
     with open(path_ascii) as File_Spectre:
         header1 = File_Spectre.readline()
         as_header = False
@@ -1670,8 +1786,161 @@ def read_ascii_spectra_2column(path_ascii:str):
     return np_data_spectre
 
 
+
+def read_ascii_metadata(path_ascii_metafile:str):
+    """Read metadata from GUPIX ASCII file"""
+    t= 0
+    dict_metadata_global = {}
+    dict_adc_metadata_arr = np.full((20), {})
+    dict_metadata = {}  
+    end_adc = False
+    indexadc = 0    
+    adc_readed = np.array([0,0,0,0,0,0,0,0,0,0,0,0],dtype=bool)
+    with open(path_ascii_metafile) as File_Metadata:
+        all_metadata = File_Metadata.readlines()
+        all_metadata = [line.strip() for line in all_metadata] # Remove whitespace
+
+    det_aglae = ["X0", "X1", "X3", "X4", "X10", "X11", "X12", "X13", "RBS", "RBS150", "RBS135",
+                     "GAMMA", "GAMMA70", "GAMMA20", "IBIL", "FORS"]
+    
+    fin_header =False
+
+    for line in all_metadata:
+        tmpheader = line.strip() # Remove whitespace
+        if tmpheader == "": continue
+        t+=1
+        if t == 495:
+                t=t
+        else:
+            t=t           
+        # Map size:1280,1280,64,64,0,2564,100000_
+        if "[ORS" in str.upper(tmpheader) or "[MAP" in str.upper(tmpheader): # Fin lecture ADC
+            end_adc = True
+
+        if "[ADC" in str.upper(tmpheader): # Read metadata ADC1
+            mynumero = re.search(r'\[ADC(\d+)\]', tmpheader) #re.search(r'[ADC(\d+)]', tmpheader) 
+            indexadc = int(mynumero.group(1)) -1
+            dict_metadata.clear() #dict_metadata_arr[indexadc]
+            idx_metadata = 0
+            adc_readed[indexadc] = 1
+    
+        if indexadc == 0 and "REPORT-FILE from  written" in str(tmpheader): 
+            para = str.split(str(tmpheader), sep='written')
+            dict_metadata_global["timestamp"]= AGLAEfunction.clean_text(para[1])
+
+        if "cmline1=" in str(tmpheader): # Nom detecteur
+            para = str.split(str(tmpheader), sep='=')
+            text_adc_name = AGLAEfunction.clean_text(para[1])
+            text_adc_name= text_adc_name.upper()
+            if text_adc_name in det_aglae:
+                dict_metadata["adc name"]= text_adc_name
+            else:
+                dict_metadata["adc name"]= "det. OFF"
+
+        if "DET:" in str.upper(tmpheader): # Info detecteur
+            para = str.split(str(tmpheader), sep='=')
+            para2 = str.split(para[1], sep=',') # 
+            par_det= str.split(para2[0], sep=':')
+            for i, text in enumerate(para2):
+                text = AGLAEfunction.clean_text(text)
+                text2 = str.split(text, sep=':')[1]
+                if "DET:" in str.upper(text): 
+                    dict_metadata["det. type"] = str.split(text, sep=':')[1]
+                if "AREA :" in str.upper(text):
+                    dict_metadata["det. active area"]= str.split(text, sep=':')[1]
+                if "TCK" in str.upper(text):
+                    dict_metadata["det. thickness"] =str.split(text, sep=':')[1]
+                if "WIN:" in str.upper(text):
+                    dict_metadata["det. entrance window"] =str.split(text, sep=':')[1]
+                if "ANGLE:"in str.upper(text) :
+                    dict_metadata["det. angle"] =str.split(text, sep=':')[1]
+                if  "S/N:" in str.upper(text): 
+                    dict_metadata["det. S/N"] =str.split(text, sep=':')[1]
+        
+        if "FILTER:" in str.upper(tmpheader): 
+            para = str.split(str(tmpheader), sep='=')
+            para2 = str.split(para[1], sep=',')
+            #para = str.split(str(tmpheader), sep=':')
+            #text = AGLAEFile.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
+            for i, text in enumerate(para2):
+                text = AGLAEfunction.clean_text(text)
+                #dict_metadata["filter"] =text
+                if "WIN:" in str.upper(text):
+                    dict_metadata["det. entrance window"] =str.split(text, sep=':')[1]
+                if "ANGLE:"in str.upper(text) :
+                    dict_metadata["det. angle"] =str.split(text, sep=':')[1]
+                if "FILTER:"in str.upper(text) :
+                    dict_metadata["det. filter"] =str.split(text, sep=':')[1]
+
+        if "CALIBRATION:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])
+            dict_metadata["calibration"] = text
+
+        if "INSTITUTION:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])  #remplace µ par u et supprime \\r\\n
+            dict_metadata_global["institution"] = text
+
+        if "SAMP. INFO:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])
+            dict_metadata_global["analyse description"] = text
+
+        if "REF ANALYSE:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])
+            # if "STANDARD:" in str.upper(text): #if text == "satndar":
+            dict_metadata_global["ref. analyse"] = text
+            # else:
+            #    dict_metadata_global["ref. object"] = text
+                
+
+        if "USERNAME:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])  
+            dict_metadata_global["username"] = text
+
+        if "PRJ EUPHROSYNE:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])  
+            dict_metadata_global["prj euphrosyne"] = text
+
+        if "OBJ EUPHROSYNE:" in str.upper(tmpheader):
+            para = str.split(str(tmpheader), sep=':')
+            text = AGLAEfunction.clean_text(para[1])  
+            dict_metadata_global["obj euphrosyne"] = text
+            if str.upper (text) == "STANDARD":
+                dict_metadata_global["target type"] = "standard"
+            else:
+                dict_metadata_global["target type"] = "object"
+
+        if "MAP SIZE:" in str.upper(tmpheader):
+            para2 = str.split(str(tmpheader), sep=':')
+            para2 = str.split(para2[1], sep=",")
+            map_info = ["map size x (um)","map size y (um)","pixel size x (um)","pixel size y (um)","pen size (um)","dose/column","dose" ]
+            for i, text in enumerate(para2): 
+                text = AGLAEfunction.clean_text(text)
+                para2[i] = text
+                dict_metadata_global[map_info[i]] = text
+                
+        if "EXP.INFO" in str.upper(tmpheader): 
+            para2 = str.split(str(tmpheader), sep=':')
+            para2 = str.split(para2[1], sep=",")
+            beam_info = ["particle", "beam energy"]
+
+            for i, text in enumerate(para2): 
+                text = AGLAEfunction.clean_text(text)
+                dict_metadata_global[beam_info[i]] = text
+        
+        if np.any(adc_readed) == True and end_adc == False:
+            dict_adc_metadata_arr[indexadc] = dict_metadata.copy()
+                
+    return  dict_adc_metadata_arr, dict_metadata_global
+
+
 def get_images_by_base_name(path_image):
-    '''Retourne les fichiers screen_capture  et capture video correspondant à un nom de base (ex:"20250225_0001*")'''
+    """Retourne les fichiers screen_capture  et capture video correspondant à un nom de base (ex:"20250225_0001*")"""
     head_tail = os.path.split(path_image)# Split le Path et le fichier
     destfile = head_tail[1].split(".")
     # Utilisez glob pour trouver les fichiers correspondants
@@ -1689,53 +1958,112 @@ def get_images_by_base_name(path_image):
     return fichiers_image,fichiers_image_video
 
 def list_spectra_with_same_name(path_ascii):
+    """Liste les fichiers spectres avec le même nom que le fichier ASCII"""
     head_tail = os.path.split(path_ascii)# Split le Path et le fichier
     destfile = head_tail[1].split(".")
     fichiers = os.listdir(head_tail[0])
     # Filtre les fichiers avec le motif "destfile"
-    fichiers_spectra = fnmatch.filter(fichiers, destfile[0] +'.X*')
+    file_X0 = fnmatch.filter(fichiers, destfile[0] +'.X0')
+    fichiers_spectra = fnmatch.filter(fichiers, destfile[0] +'.X0')
+    for ext in ['X1', 'X3', 'X4', 'X11','X23', 'X134', 'X34', 'X13', 'X10','X1234']:
+        fichiers_spectra += fnmatch.filter(fichiers, destfile[0] +'.' + ext)
     fichiers_spectra += fnmatch.filter(fichiers, destfile[0] +'.R*')
     fichiers_spectra += fnmatch.filter(fichiers, destfile[0] +'.G*')
+    fichiers_spectra += fnmatch.filter(fichiers, destfile[0] +'.IL*')
   
-    return fichiers_spectra
+    return fichiers_spectra , file_X0
+
+def gupix_metadata_from_path(path_ascii):
+    """Récupère les métadonnées du fichier GUPIX à partir du chemin du fichier ASCII"""
+    dict_metadata = {}
+    with open(path_ascii) as f:
+       header1 = f.readline()
+       header1 = f.readline()
+       gupix_hearder= header1.split("'")
+       dict_metadata["gupix header"] = gupix_hearder[0] 
+       gupix_hearder2= header1.split(" ")
+       dict_metadata["spectra sum"] = gupix_hearder2[4]
+
+    return dict_metadata
+
+def gupix_metadata_acq_time_and_dose(path_ascii):
+    """Récupère le temps d'acquisition du fichier GUPIX"""
+    acq_time = "0"
+    with open(path_ascii) as f:
+       header1 = f.readline()
+       header1 = f.readline()
+       gupix_hearder= header1.split("'")
+       gupix_hearder2= header1.split(" ")
+       acq_time = gupix_hearder2[3]
+       try:
+        real_dose= search_Dose(header1)
+        real_dose = real_dose.replace("'", "")
+       except:
+        real_dose = "0" # Default dose if not found in header"
+
+    return acq_time,real_dose
 
 
 def main():
     print("hello master")
+    
     _path_lst = ""
     _fnct = "maps"
     _path_ascii = ""
+    _ibil = "" 
     if len(sys.argv) < 2:
         print("Usage:  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
         #_path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
        # _path_lst = 'C:\\Data\\2025\\Lst_2025\\20250128_0015_OBJ_IMAGERIE_IBA.lst'
         #_path_lst ="C:\\Data\\2025\\Lst_2025\\20250206_0008_OBJ_AGLAE_IBA.lst"
-        _path_lst ="C:\Data\\2025\\lst_FX\\20250519_0181_OBJ_BOS_IBA.lst"
+        #_path_lst ="C:\Data\\2025\\lst_FX\\20250519_0181_OBJ_BOS_IBA.lst"
+        #_path_lst ="C:\\Data\\2025\\lst_CavePit\\20250616_0016_KNHLNorth-1_CAVEPIT_IBA.lst"
+        _path_lst ="C:\\Data\\2025\\fff\\20250618_0001_STD_AGR_IBA.lst"
+        _path_lst = "C:\\Data\\2025\\2025_loisel\\LST\\lst\\20250626_0048_peinture_FR-STAINEDGLASS_IBA.lst"
+        _path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
         _path_ascii = "NULL"
         #_path_ascii = "C:\\Data\\20220725_Renne-provenance\\20220725_Renne-provenance\\20220725_0001_std_RENNE-PROV_IBA.x0"
-        _path_ascii ="C:\\Data\\2025\lst_FX\\20250519_0181_OBJ_BOS_IBA.x0"
-        #_fnct = "MAPS"
-        _fnct = "SPECTRA"
+        #_path_ascii ="C:\\Data\\2025\lst_FX\\20250519_0181_OBJ_BOS_IBA.x0"
+        #_path_ascii ="C:\\Data\\2025\\lst_CavePit\\20250616_0016_KNHLNorth-1_CAVEPIT_IBA.x0"
+        _path_ascii = "C:\\Data\\2025\\fff\\20250618_0001_STD_AGR_IBA.x0"
+        _path_ascii = "C:\\Data\\2025\\Yvan_IBIL\\20250630_SRV-Vishnu\\20250630_0001_STD_SRV-VISHNU_IBA.x0"
+        _fnct = "MAPS"
+        #_fnct = "SPECTRA"
     else:
         _fnct = str.upper(lst_arg[1])
         _path_lst = lst_arg[2]
+
         if len(sys.argv) > 2: # En cas de cas MAPS pas d'argument 3
             _path_ascii = lst_arg[3]
 
         #return
     #_fnct =str.upper("spectra")
-    dict_adc_metadata_arr,dict_metadata_global = AGLAEFile.open_header_lst(_path_lst)
-
+    if _fnct not in ["MAPS", "SPECTRA"]:
+        print("Function must be 'MAPS' or 'SPECTRA'")
+        return
+   
+    head_tail = os.path.split(_path_lst) # Split le Path et le fichier
+    #_path_metafile = os.path.join(head_tail[0], head_tail[1].split(".")[0] + ".metafile") # Chemin du fichier de métadonnées
+    #dict_adc_metadata_arr,dict_metadata_global = read_ascii_metadata(_path_metafile) # Lecture des métadonnées du fichier ASCII spectra
+    dict_adc_metadata_arr,dict_metadata_global = AGLAEfunction.open_header_lst(_path_lst)
+    path_hdf5 = os.path.join(head_tail[0], head_tail[1].split(".")[0] + ".hdf5") # Chemin du fichier HDF5
+    hdf5_filename =AGLAEfunction.create_hdf5_filename(_path_lst) # Crée le nom du fichier HDF5 à partir du nom du fichier LST
+    
     for arg in sys.argv[1:]:
         print(f"Argument: {arg}")
 
     if _fnct== "MAPS":
         #_config_adc = read_cfg_adc()
-        AGLAEFile.extract_lst_vector(_path_lst, dict_metadata_global, dict_adc_metadata_arr)
-        AGLAEFile.write_hdf5_metadata(_path_lst, dict_metadata_global)
+        AGLAEfunction.extract_lst_vector(_path_lst, dict_metadata_global, dict_adc_metadata_arr)
+        AGLAEfunction.write_hdf5_metadata(_path_lst, dict_metadata_global)
+        ibil = False
+        ibil,path_edf = AGLAEfunction.search_ibil_folder(_path_ascii)
+        if ibil == True:
+            AGLAEfunction.ibil_To_hdf5(path_edf,"IBIL",_path_lst,dict_adc_metadata_arr)
+
+        AGLAEfunction.copy_hdf5_to_folder(path_hdf5,_path_ascii)
     elif _fnct == "SPECTRA":
-      
-        ascii_to_hdf5(_path_ascii,dict_metadata_global,dict_adc_metadata_arr)
+        AGLAEfunction.ascii_to_hdf5(_path_ascii,dict_metadata_global,dict_adc_metadata_arr)
         images_to_hdf5(_path_ascii,dict_metadata_global)
 
 if __name__ == "__main__":

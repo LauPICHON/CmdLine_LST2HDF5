@@ -1,0 +1,1 @@
+pyinstaller --onefile --add-data="config_lst2hdf5.ini;." cmdLine_lst_vector.py
