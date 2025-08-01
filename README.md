@@ -7,7 +7,7 @@ It extracts ASCII files and converts them to hdf5 format.
 `cmdLine_lst_vector.exe <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
 
 **Example:**
-`cmdLine_lst_vector.exe maps "C:\Data\2025\test_IBIL\20250630_0029_OBJ_SRV-1_IBA.lst" “C:\Data\2025\test_IBIL\20250630_SRV-Vishnu\20250630_0001_STD_SRV-1_IBA.x0"`
+`cmdLine_lst_vector.exe maps "C:\Data\2025\test_IBIL\lst\20250630_0029_OBJ_SRV-1_IBA.lst" “C:\Data\2025\test_IBIL\20250630_SRV-1\20250630_0001_STD_SRV-1_IBA.x0"`
 
 The file `config_lst2hdf5.ini` allows you to:
 - Define the number of channels for each type of analysis (PIXE, RBS, GAMMA).
