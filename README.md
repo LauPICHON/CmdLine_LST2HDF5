@@ -1,34 +1,30 @@
-Fonctions: cmdLine_lst_vector.exe
-Converti le fichier LST créée par le multicanal MPAWIN3 pour recréer les cartographies au format hdf5.
-Extrait les fichiers ascii pour les convertir au format hdf5.
 
-Usage:  cmdLine_lst_vector.exe  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
-Exemple: 
-cmdLine_lst_vector.exe maps "C:\\Data\\2025\\test_IBIL\\20250630_0029_OBJ_SRV-1_IBA.lst" “C:\\Data\\2025\\test_IBIL\\20250630_SRV-Vishnu\\20250630_0001_STD_SRV-1_IBA.x0"
+**Functions:** `cmdLine_lst_vector.exe`
+Converts the LST file created by the MPAWIN3 multichannel system to recreate the maps in hdf5 format. 
+It extracts ASCII files and converts them to hdf5 format.
 
-Le fichier "config_lst2hdf5.ini" permet: 
-- de définir le nombre de canaux pour chaque type d'analyse (PIXE,RBS,GAMMA)
-- De définir sur quel voie du multicanal les coordonnées X & Y sont enregistrés.
+**Usage:**
+`cmdLine_lst_vector.exe <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
 
+**Example:**
+`cmdLine_lst_vector.exe maps "C:\Data\2025\test_IBIL\20250630_0029_OBJ_SRV-1_IBA.lst" “C:\Data\2025\test_IBIL\20250630_SRV-Vishnu\20250630_0001_STD_SRV-1_IBA.x0"`
 
-Fonctions :
+The file `config_lst2hdf5.ini` allows you to:
+- Define the number of channels for each type of analysis (PIXE, RBS, GAMMA).
+- Specify on which multichannel channel the X & Y coordinates are recorded. (COORD_X & COORD_Y values)
 
-1)	Hdf5 des analyses ponctuelles, arg2=spectra (standard et batch)
+**Functions:**
 
-Deux fichiers hdf5 sont créés automatiquement à la fin des analyses correspondant respectivement, aux analyses définies comme un standard (standard) et celles sur les objets/échantillons (batch).
-Le programme python va lire les fichiers ascii (x0,x1,x2,…rbs150,g70,…) pour créer les dataset de l’hdf5 et extraire les metadata depuis le fichier lst.
--	Nommage : « date_nomproject_standard_IBA.hdf5 »
-ex : 20250630_SRV-1_standard_IBA.hdf5
+- **Hdf5 for spot analyses, arg2=spectra (standard and batch):**
+    - Two hdf5 files are automatically created at the end of the analyses, corresponding respectively to analyses defined as a standard ("standard") and those on objects/samples ("batch").
+    - The Python program will read the ASCII files (x0, x1, x2, … rbs150, g70, …) to create the hdf5 datasets and extract metadata from the lst file.
+    - Naming convention: `"date_projectname_standard_IBA.hdf5"` e.g., `20250630_SRV-1_standard_IBA.hdf5`
+    - Naming convention: `"date_projectname_batch_IBA.hdf5"` e.g., `20250630_SRV-1_batch_IBA.hdf5`
 
--	Nommage : « date_nomproject_batch_IBA.hdf5 »
-ex : 20250630_SRV-1_batch_IBA.hdf5
+- **Hdf5 for imaging/mappings, arg2=maps (standard and batch):**
+    - For each map, one hdf5 file is automatically created from the lst (mpawin) file on the acquisition PC (MPA4-ACQ) then copied to the "HDF5_maps_files" folder on NAS3-AGLAE.
+    - Naming convention: `"name of the lst file.hdf5"` e.g., `20250630_0029_OBJ_SRV-1_IBA.hdf5`
 
-2)	Hdf5 des cartographies, arg2=maps (standard et batch)
-
-Pour chaque carto un fichier hdf5 est créé automatiquement à partir du fichier lst (mpawin) sur le PC d’acquisition (MPA4-ACQ) puis copier dans le dossier « HDF5_maps_files » du NAS3-AGLAE
--	Nommage : « nom du fichier lst.hdf5 »
-ex : 20250630_0029_OBJ_SRV-1_IBA.hdf5
-
-Cas particulier IBIL.
-Pour le moment le programme labview IBIL enregistre les cartos dans le format EDF. Lors de la création du fichier hdf5, mon programme python va rechercher le dossier IBIL (dans le dossier de l’utilisateur) 
-contenant les fichiers EDF pour les lires et ainsi ajouter le dataset IBIL à l’hdf5 des autres cartos.
+- **Special case: IBIL.**
+    - For now, the IBIL Labview program records the maps in EDF format.
+    - When creating the hdf5 file, my Python program will search for the IBIL folder (within the user's folder) containing the EDF files in order to read them and add the IBIL dataset to the hdf5 file along with the other maps.
