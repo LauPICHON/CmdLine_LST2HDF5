@@ -16,7 +16,7 @@ class AGLAEfunction(object):
     _FILE_LOCK_1 = threading.Lock()
 
     def __init__(self):
-        self.path_config_file = "config.ini"
+        self.path_config_file = "config_lst2hdf5.ini"
         self.detector = "LE0"
         self.config_adc_all = {}
 
