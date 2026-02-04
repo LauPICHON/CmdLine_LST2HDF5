@@ -1,0 +1,16 @@
+{
+    // Use IntelliSense to learn about possible attributes.
+    // Hover to view descriptions of existing attributes.
+    // For more information, visit: https://go.microsoft.com/fwlink/?linkid=830387
+    "version": "0.2.0",
+    "configurations": [
+
+        {
+            "name": "Mon Python Debugger LST",
+            "type": "debugpy",
+            "request": "launch",
+            "program": "C:\\Dev\\Python\\CmdLine_LST2HDF5\\cmdLine_lst_vector.py",
+            "console": "integratedTerminal"
+        }
+    ]
+}

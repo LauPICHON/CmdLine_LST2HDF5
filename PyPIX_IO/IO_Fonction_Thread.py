@@ -873,7 +873,7 @@ class AGLAEFile(object):
         return first_x_value, last_x_value
 
     def range_x(coord_x,croissant):
-        
+        """ Retourne le premier et dernier X du tableau en Input"""
         local_max_x = np.max(coord_x)
         local_min_x = np.min(coord_x)
         nb_max = np.where(coord_x == local_max_x)
@@ -889,6 +889,7 @@ class AGLAEFile(object):
 
 
     def read_range_x(coord_x,croissant):
+        """ Retourne le premier et dernier X du tableau en Input"""
         local_max_x = np.max(coord_x)
         last_pos_x = np.empty(0, dtype=np.uint16)
         first_pos_x = np.empty(0, dtype=np.uint16)
@@ -921,7 +922,7 @@ class AGLAEFile(object):
 
         
     def read_indice_max_x(croissant,sizeX,coord_x,included_x):
-            
+            """ Retourne l'indice du dernier X du tableau en Input"""
             # if croissant == True:
             #     included_x=sizeX-1
             # elif croissant == False:
@@ -1015,7 +1016,7 @@ class AGLAEFile(object):
     
     
     def read_min_x(coord_x, croissant, previous_last_x):
-
+        """ Retourne le premier X du tableau en Input"""
         last_pos_x = np.empty(0, dtype=np.uint16)
         first_pos_x = np.empty(0, dtype=np.uint16)
         for pos in range(100):
@@ -1046,6 +1047,7 @@ class AGLAEFile(object):
         return first_x_value
 
     def read_max_indice_change_colonne(coord_y,y_scan_total):
+        """ Retourne l'indice de la derniere valeur Y du tableau en Input"""
         fin_ligne = False
         indice_y_last = np.where(coord_y > y_scan_total)  # recherche les val de la dernier colonne
         if len(indice_y_last[0]) < 50:
@@ -1058,6 +1060,7 @@ class AGLAEFile(object):
 
 # Fonction d'extraction du fichier LST avec vectorisation
     def extract_lst_vector(path_lst, dict_para, ADC_X = 8, ADC_Y = 9, bin_x_value=1, bin_y_value=1):
+        """ Fonction d'extraction du fichier LST avec vectorisation"""
         pathlst1 = path_lst
         tmpheader = ""
         header1 = list()
@@ -1399,15 +1402,16 @@ class AGLAEFile(object):
                         
                         if range_histo < 0:
                             print('error range_histo') 
-                        if range_histo==1:
+
+                        # On range les valeurs dans un histogramme 2D
+                        if range_histo==1: 
                            H1, xedges, yedges= np.histogram2d(new_coord_y,adc3,bins=(nb_column,nbcanaux),range= ({0, nb_column-1},{0, nbcanaux-1}))
                         
                         else:
                             H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc3),
                                                    range=({0, nb_column-1}, r1, {0, nbcanaux-1}),
                                                    bins=(nb_column, range_histo, nbcanaux))
-                       
-                    
+                                           
                        
                         if croissant == True:
                             ind_1 = first_x_value
@@ -1642,6 +1646,7 @@ def look_if_next_line(max_val_y_lue,y_scan_total):
 
                             
 def ret_num_adc(detector):
+   """Retourne le numéro ADC pour le detector"""
    switcher = {
                 "X0":  0b0000000000010000, #2A
                 "X1":  0b0000000000000001,
@@ -1659,6 +1664,7 @@ def ret_num_adc(detector):
 
 
 def ret_adc_name(num_adc):
+   """Retourne le nom du ADC pour le numéro donné"""
    switcher = {
                0: "X1",
                1: "OFF",
@@ -1688,84 +1694,4 @@ def ret_range_bytes(val):
             nombre_bytes = bits
     return  2**(nombre_bytes+1) - 1
 
-
-
-class stream_process(object):
-    _FILE_LOCK_1 = threading.Lock()
-
-    def __init__(self):
-        self.path = "c:/temp/toto.lst"
-        self.detector = "X0"
-        self.all_det_aglae = ["X0", "X1", "OFF", "X3", "X4", "X", "X11", "X12", "X13", "RBS", "RBS150", "RBS135",
-                     "GAMMA", "GAMMA70", "GAMMA20", "IBIL", "FORS"]
-
-    def ret_range_bytes(val):
-        """Donne n°bits max pour valeur"""
-        for bits in range(16):
-            if val & (0b0000000000000001 << bits):
-                nombre_bytes = bits
-        return  2**(nombre_bytes+1) - 1
-
-    def look_if_next_line(max_val_y_lue,y_scan_total):
-        """informe si le dataset contient la fin du scan """
-        if max_val_y_lue > y_scan_total: 
-            change_line= True
-        else:
-            change_line =False
-
-        return change_line
-
-    def get_last_x_to_include(croissant,columns,last_x_value,first_x_value,change_line,fin_lst):
-        """Recupére Last X à inclure dans ce process"""
-        # if columns== False:
-        #     included_x = last_x_value
-        if columns==True and change_line==False and fin_lst==False:
-            if croissant== True:
-                included_x = last_x_value -1 #on va eclure le X-1
-            elif croissant== False:
-                included_x = first_x_value +1
-        else:
-            if croissant== True:
-                included_x = last_x_value
-            else:
-                included_x = first_x_value
-            
-        return included_x
-
-    def get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found):
-        """True si plusieurs column dans le Data array"""
-        columns = False
-
-        if croissant:
-            if not end_lst_file_found:
-                columns = included_x > first_x_value
-            else:
-                columns = included_x > first_x_value
-        
-        else:
-            if first_x_value < last_x_value :
-                if not end_lst_file_found:
-                    columns = included_x < last_x_value
-                else:
-                    columns = included_x < last_x_value
-            else:
-                columns = False
-        return columns
-
-
-    def get_x_end_line_scan(croissant,sizex):
-        """Get le X max du scan suivant ligne pair/impaire"""
-        if croissant==True:
-            end_x=sizex-1
-        else:
-            end_x=0
-        return end_x
-
-    def look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,val_fin_x):
-        """informe si on atteins la fin du fichier LST"""
-        if max_val_y_lue==sizeY-1 and val_x_fin_map == val_fin_x: #Fin du fichier LST ?
-            fin_lst = True
-        else: 
-            fin_lst = False
-        return fin_lst
 
