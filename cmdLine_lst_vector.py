@@ -306,7 +306,7 @@ class AGLAEfunction(object):
         """Create combined PIXE data from multiple detectors."""
         detectors = [134,13,14,34] #"1+3+4","3+4","1+4","1+3"]
         for num_det in detectors:
-           
+     
             if num_det == 1234:
                 data = cube_one_pass_pixe[0] + cube_one_pass_pixe[1] + cube_one_pass_pixe[2] + cube_one_pass_pixe[3]
                 metadata_one_adc = _dict_adc_metadata_arr[0]
@@ -495,11 +495,6 @@ class AGLAEfunction(object):
             objetacq = "?"
             projetacq = "?"
 
-        # dict_metadata_global["obj"] = objetacq
-        # dict_metadata_global["num analyse"] = num_analyse
-        # dict_metadata_global["prj"] = projetacq
-        # dict_metadata_global["dateacq"] = dateacq #En général la date acquisition -> 20250105''
-        # dict_metadata_global["type analyse"] = "OBJ"
         t =0
         det_aglae = ["X0", "X1", "X3", "X4", "X10", "X11", "X12", "X13", "RBS", "RBS150", "RBS135",
                      "GAMMA", "GAMMA70", "GAMMA20", "IBIL", "FORS"]
@@ -847,7 +842,7 @@ class AGLAEfunction(object):
             conditionXY = np.logical_and(conditionY, conditionX)
             return conditionXY      
 
-    def read_indice_max_x(croissant,sizeX,coord_x,included_x):
+    def read_indice_max_x(croissant,coord_x,included_x):
             """Recherche la derniere valeur de X du tableau en Input"""
             indice_x_max = np.where(coord_x == included_x)
             len_x_max = len(np.shape(indice_x_max[0]))
@@ -916,22 +911,23 @@ class AGLAEfunction(object):
         return indice_last
 
 
-    def get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found):
+    def get_colums_range(croissant,first_x_value,last_x_value):
         """True si plusieurs column dans le Data array"""
+        columns = False
         if croissant== True:
-            if end_lst_file_found == False :
-                columns = included_x > first_x_value
-            else:
-                columns = included_x > first_x_value
+            # if end_lst_file_found == False :
+            #     columns = included_x > first_x_value
+            # else:
+            columns = last_x_value > first_x_value
         
         else:
-            if first_x_value < last_x_value :
-                if end_lst_file_found == False :
-                    columns = included_x < last_x_value
-                else:
-                    columns = included_x < last_x_value
-            else:
-                columns = False
+            columns = first_x_value < last_x_value
+            # if first_x_value < last_x_value :
+            #     if end_lst_file_found == False :
+            #         columns = included_x < last_x_value
+            #     else:
+            #         columns = included_x < last_x_value
+           
         return columns
 
 
@@ -954,7 +950,8 @@ class AGLAEfunction(object):
         return included_x
     
 
-    def clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x,croissant):
+    def clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x):
+        """Nettoie les coordonnées X et Y en fonction de la taille de la cartographie et des valeurs précédemment trouvées."""
         error_y =False
         max_size_x = ret_range_bytes(sizeX - 1)
         max_size_y = ret_range_bytes(sizeY - 1)
@@ -978,6 +975,7 @@ class AGLAEfunction(object):
         return coord_x,coord_y,error_y
     
     def all_clean_coord(sizeX,sizeY,coord_x,coord_y):
+        """Nettoie les coordonnées X et Y en fonction de la taille de la cartographie."""
         error_y =False
         max_size_x = ret_range_bytes(sizeX - 1)
         max_size_y = ret_range_bytes(sizeY - 1)
@@ -997,19 +995,20 @@ class AGLAEfunction(object):
   
         return coord_x,coord_y,error_y
     
-    def search_min_x_all_adc(array_adc,adc_values,conditionXY,adjusted_indices,data_array,ADC_X,ADC_Y,sizeX,sizeY,croissant,y_max_current_scan):
-
+    def search_min_x_all_adc(array_adc,adc_values,conditionXY,adjusted_indices,data_array,
+                             ADC_X,ADC_Y,sizeX,sizeY,croissant,y_max_current_scan,
+                             b_previous_find_x,previous_find_x,end_lst_file_found):
+        """ recherche la derniere valeur de X, nb adc et changement de line du tableau en Input pour tous les ADC et retourne le minimum trouvé"""
         if croissant == True:
-            prev_x_found = 0
+            final_x_found = 0
         else:
-            prev_x_found = sizeX-1
+            final_x_found = sizeX-1
             
         nb_adc_not_found =0
         for num_line_adc in array_adc: #range(12):
                         sleep(0.002)
-                        first_adc_in_block = True
                         if num_line_adc == 1 or num_line_adc == 8 or num_line_adc == 9 or num_line_adc == 55: continue
-                            
+
                         non_zero_indices = AGLAEfunction.return_index_adc_in_data_array(adjusted_indices,adc_values,num_line_adc,conditionXY)
                         if non_zero_indices[0] == -1 or len(non_zero_indices) < 50:
                             nb_adc_not_found +=1
@@ -1018,33 +1017,38 @@ class AGLAEfunction(object):
                         indice_val_to_read = AGLAEfunction.return_val_to_read(adc_words,non_zero_indices)
 
                         coord_x = data_array[indice_val_to_read[ADC_X, :]]  
-                        #coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
                         coord_y = data_array[indice_val_to_read[ADC_Y, :]]
-                        # if croissant == False:
-                        #      coord_x = np.flip(coord_x)
-                        #      coord_y = np.flip(coord_y)
-                           
-                        #if end_lst_file_found == False :
-                        coord_x, coord_y,error_y = AGLAEfunction.all_clean_coord( sizeX, sizeY,coord_x,coord_y) # del 
+                       
+                        coord_x, coord_y,error_y = AGLAEfunction.clean_coord( sizeX, sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x) # del 
                         max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
                         change_line = look_if_next_line(max_val_y_lue,y_max_current_scan)
                         
-                        if coord_x[0] !=0 and change_line == False: # coord_X =0 anormal si changement de ligne je garde les zeros (Y max sert de delimiateteur et non X)
-                            x_zero_error = np.where(coord_x ==0) # Recherche si des X=0 présents dans X !=0
-                        else:
-                            x_zero_error = np.zeros((1, 1), dtype=np.uint32)
+                        # if coord_x[0] !=0 and change_line == False: # coord_X =0 anormal si changement de ligne je garde les zeros (Y max sert de delimiateteur et non X)
+                        #     x_zero_error = np.where(coord_x ==0) # Recherche si des X=0 présents dans X !=0
+                        # else:
+                        #     x_zero_error = np.zeros((1, 1), dtype=np.uint32)
 
-                        max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
+                        #max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
                         first_x_value, last_x_value = AGLAEfunction.read_range_x(coord_x, croissant)
-                            
-                        if croissant == True:
-                            if last_x_value > prev_x_found:
-                                prev_x_found = last_x_value
-                        else:
-                            if first_x_value < prev_x_found:
-                                prev_x_found = first_x_value
 
-        return prev_x_found ,nb_adc_not_found,change_line
+                        
+
+                        if croissant == True:
+                            _1st_x_found = first_x_value
+                            if (last_x_value - 1) >= 0 and last_x_value - 1 >= final_x_found and end_lst_file_found == False:
+                                final_x_found = last_x_value -1
+                            else:
+                                final_x_found = last_x_value
+                         
+                        else:
+                            _1st_x_found = last_x_value
+                            if first_x_value + 1 <= sizeX and first_x_value + 1 <= final_x_found and end_lst_file_found == False:
+                                final_x_found = first_x_value +1
+                            else:
+                                final_x_found = first_x_value
+
+
+        return final_x_found, _1st_x_found,nb_adc_not_found,change_line
 
     def extract_lst_vector(path_lst:str, dict_para_global:dict,_dict_adc_metadata_arr:dict):
         pathlst1 = path_lst
@@ -1062,6 +1066,7 @@ class AGLAEfunction(object):
                    array_adc.append(int(key))
 
         #array_adc =np.flip(array_adc)
+        #array_adc.append(1)
         print("ADC used :",array_adc)
         
         tmpheader = ""
@@ -1084,7 +1089,8 @@ class AGLAEfunction(object):
         nbcanaux_gamma20 = int(_dict_channel_adc['gamma20'])
         nbcanaux_gamma70 = int(_dict_channel_adc['gamma70'])
         nbcanaux_rbs = int(_dict_channel_adc['rbs'])
-        cube = np.zeros((sizeX, sizeY, nbcanaux), 'u4')
+        nb_column_to_read = int(_dict_channel_adc['nb_column'])
+        # cube = np.zeros((sizeX, sizeY, nbcanaux), 'u4')
         # for i in range (0,50):
 
         file = open(path_lst, 'rb')
@@ -1111,16 +1117,14 @@ class AGLAEfunction(object):
             pensize = int(dict_para_global["pen size (um)"])
             nb_pass_y = int(sizeY / (pensize / int(dict_para_global["pixel size y (um)"])))
             nb_column_total = sizeX*nb_pass_y
-           
-        
-            
+                   
             size_lst = int(size_lst)  # car on lit des Uint16 donc 2 fois moins que le nombre de bytes (Uint8)
             size_block = size_lst
             nb_col = 2
-            if size_lst < 5*10**6:
-                nb_col = np.int16((nb_column_total /nb_pass_y )/4)
-            else:
-                nb_col = 2
+            # if size_lst < 5*10**6:
+            nb_col = np.int16((nb_column_total /nb_pass_y )/nb_column_to_read)
+            # else:
+                # nb_col = nb_column_to_read
 
             #nb_col = 2
 
@@ -1129,7 +1133,7 @@ class AGLAEfunction(object):
             size_block = int(size_4_column_scan)
             size_block_big = int(size_4_column_scan) * 2
             large_map = False
-
+            #size_block = 15000
             if size_lst > 1000000 and sizeX > 40:
                 large_map = True
        
@@ -1167,9 +1171,9 @@ class AGLAEfunction(object):
             else:
                 last_x_maps = sizeX - 1
             nb_total_event = 0
-            nb_event_x0 = 0
-
+            progress =0 
             for num_pass_y in range(nb_pass_y):
+                """Process each pass for each pass line """
                 print(num_pass_y +1,"//",nb_pass_y,end='\n')
 
                 if end_lst_file_found==True: # fin LST avant fin de la taille de la carto (ABORT sur New Orion)
@@ -1195,7 +1199,7 @@ class AGLAEfunction(object):
                 zero_off = False
                 previous_find_x = 0
                 b_previous_find_x = False
-                    
+                   
                 while (fin_ligne == False and end_lst_file_found == False):  # max_val_y_lue <= y_scan): # or croissa nte == False ):
 
                     adc2read = 0
@@ -1203,17 +1207,7 @@ class AGLAEfunction(object):
                     data_array = np.empty(0, dtype=np.uint16)
                     adjusted_indices = np.empty(0, dtype=np.uint16)
                     adjusted_indices_previous = np.empty(0, dtype=np.uint16)
-                    # if large_map == True:
-                    #     if croissant == True:
-                    #         if previous_find_x < sizeX -20 :
-                    #             nb_byte_to_read = size_block_big
-                    #         else:
-                    #             nb_byte_to_read = size_block
-
-                    #     if croissant == False: 
-                    #         if previous_find_x >20 or previous_find_x==0:
-                    #             nb_byte_to_read = size_block_big
-                    #         else:
+            
                     nb_byte_to_read = size_block
                               
                     min_last_pos_x_y_in_array = 0 #nb_byte_to_read
@@ -1225,38 +1219,53 @@ class AGLAEfunction(object):
                     
                     nb_32768 = np.count_nonzero(data_array == 32768)
                     nb_total_event = nb_total_event + nb_32768
+                    
+                    #""" Process Data Array to extract ADC values and coordinates"""
                     adjusted_indices, data_array ,shape_data_array = AGLAEfunction.return_adc_adjusted_index (data_array_previous, data_array)
+
                     adc_values = np.array(data_array[adjusted_indices])
                     if len(data_array) < 1 : 
                         exit 
-
+                    progress += int(len(data_array)*2*(100/size_lst))
+                    print("progress : ", progress, "%", end='\n')
                     nb_read_total += (nb_byte_to_read * 2) + len(data_array_previous)
-                    t1 = perf_counter()
-                    
-                    #array_adc = [0,4]
-                    max_size_x = ret_range_bytes(sizeX - 1)
-                    max_size_y = ret_range_bytes(sizeY - 1)
+                    print("total read : ", nb_read_total, " / ", size_lst, end='\n')
                     conditionXY= AGLAEfunction.get_X_Y_condition(adc_values,ADC_X,ADC_Y)
                     nb_adc_not_found = 0
                     last_indx_x = 0
                     next_x_value_col = 0
                     first_adc_in_block = False
-                    min_x ,nb_adc_not_found,change_line= AGLAEfunction.search_min_x_all_adc(array_adc,adc_values,conditionXY,adjusted_indices,data_array,ADC_X,ADC_Y,sizeX,sizeY,croissant,y_max_current_scan)
+                    #"""returne min X pour tous les ADC"""
+                    last_x_in_array,_1st_x_found, nb_adc_not_found,change_line= AGLAEfunction.search_min_x_all_adc(array_adc,adc_values,conditionXY,
+                                                                                                                    sizeX,sizeY,croissant,y_max_current_scan,
+                                                                                                                    b_previous_find_x,previous_find_x,end_lst_file_found)
                     nb_adc_not_found = 0
-                    
                     first_adc_in_block = True
+                    val_x_fin_map = get_x_end_line_scan(croissant,sizeX)
+
+                   
+                    # Cas particulier X dans le block pas present (faisceau OFF) ou dernier colonne (0 et sizeX-1)
                     if change_line == True:
                         if croissant == True:
-                            min_x = sizeX-1
+                            last_x_in_array = sizeX-1
                         else:
-                            min_x = 0
+                            last_x_in_array = 0
                     else:
-                        if min_x == 0 and croissant == False and end_lst_file_found == False and change_line == False:
-                           min_x = 1
+                        if last_x_in_array == 0 and croissant == False and end_lst_file_found == False and change_line == False:
+                           last_x_in_array = 1
 
-                        if min_x == sizeX-1 and croissant == True and end_lst_file_found == False and change_line == False:
-                           min_x = sizeX -2
-                    print("minimum x = ", min_x, end='\n')
+                        if last_x_in_array == sizeX-1 and croissant == True and end_lst_file_found == False and change_line == False:
+                           last_x_in_array = sizeX -2
+                    
+                    if croissant:
+                       first_x_value = _1st_x_found
+                       last_x_value = last_x_in_array
+
+                    else:
+                        first_x_value = last_x_in_array
+                        last_x_value = _1st_x_found
+
+                    print("minimum x = {} , maximum x = {}".format(first_x_value, last_x_value), end='\n')
 
                     for num_line_adc in array_adc: #range(12):
                         sleep(0.002)
@@ -1284,40 +1293,34 @@ class AGLAEfunction(object):
                         indice_val_to_read = AGLAEfunction.return_val_to_read(adc_words,non_zero_indices)
 
                         coord_x = data_array[indice_val_to_read[ADC_X, :]]  
-                        #coord_x = coord_x & max_size_x  # & binaire pour masquer bits > max_size à 0
                         coord_y = data_array[indice_val_to_read[ADC_Y, :]] 
-                     
-                        # if croissant == False:
-                        #      coord_x = np.flip(coord_x)
-                        #      coord_y = np.flip(coord_y)
-                           
-                        #if end_lst_file_found == False :
-                        coord_x, coord_y ,error= AGLAEfunction.clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x,croissant) # del 
-                        max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
-                        change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
+                        coord_x, coord_y ,error= AGLAEfunction.clean_coord(sizeX,sizeY,coord_x,coord_y,b_previous_find_x,previous_find_x) # del 
+                       
+                        #change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
                         
                         if coord_x[0] !=0 and change_line == False: # coord_X =0 anormal si changement de ligne je garde les zeros (Y max sert de delimiateteur et non X)
                             x_zero_error = np.where(coord_x ==0) # Recherche si des X=0 présents dans X !=0
                         else:
                             x_zero_error = np.zeros((1, 1), dtype=np.uint32)
 
-                        if first_adc_in_block == True:
-                            max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
-                            first_x_value, last_x_value = AGLAEfunction.read_range_x(coord_x, croissant)
-                            if croissant:
-                                last_x_value = min_x
-                            else:
-                                first_x_value = min_x
-                            #first_x_value, last_x_value = AGLAEFile.range_x(coord_x, croissant)
-                        
-                        if first_x_value !=0 and len(x_zero_error[0]) > 1: #coord_X =0 anormal
+                        # if first_adc_in_block == True:
+                        #     max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)
+                        #     first_x_value, last_x_value = AGLAEfunction.read_range_x(coord_x, croissant)
+                        #     if croissant:
+                        #         last_x_value = last_x_in_array
+                        #     else:
+                        #         first_x_value = last_x_in_array
+
+                        # Clean Coord_X quand coord_X =0 alors que X =0 ne doit pas exister dans ce Block de data_array
+                        if first_x_value !=0 and len(x_zero_error[0]) > 1: 
                             coord_x = np.delete(coord_x, x_zero_error)
                             coord_y = np.delete(coord_y, x_zero_error)
                             first_x_value, last_x_value = AGLAEfunction.read_range_x(coord_x, croissant)
-                                
-                        if first_adc_in_block == True:
-                            change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
-                            val_x_fin_map = get_x_end_line_scan(croissant,sizeX) # retourne val final 0 ou SizeX-1
+
+                        max_val_y_lue,min_val_y_lue = AGLAEfunction.read_min_max_y(coord_y)        
+                        #if first_adc_in_block == True:
+                            #change_line = look_if_next_line(max_val_y_lue,y_max_current_scan) #True or False si Changement de Y sup.
+                            #val_x_fin_map = get_x_end_line_scan(croissant,sizeX) # retourne val final 0 ou SizeX-1
                         
                         if change_line == False:
                             fin_lst = look_if_end_lst(max_val_y_lue,sizeY,val_x_fin_map,last_x_value)
@@ -1332,49 +1335,44 @@ class AGLAEfunction(object):
                        
                        # Dertermine la dernière valeur X
                         if first_adc_in_block == True:
-                            included_x =min_x# AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
-                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                            #included_x =last_x_in_array# AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
+                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value)
                             #included_x = AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
                         
                       
                         if last_x_value < first_x_value and croissant==True: # Cas trop lus de columns
                             last_x_value = sizeX-1
-                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value)
                         
                         if first_x_value > last_x_value and croissant==False: # Cas trop lus de columns
                             first_x_value = 0
-                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value,included_x,end_lst_file_found)
+                            columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value)
            
                        
                         if end_lst_file_found == True or fin_lst == True:
                                  indice_last = len(coord_y) -1
                         else:
                             if columns == True and change_line == False: # plus de 1 colonne
-                                indice_last = AGLAEfunction.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
+                                indice_last = AGLAEfunction.read_indice_max_x(croissant,coord_x,last_x_in_array)#,next_x_value[num_line_adc])
                             elif columns == False and change_line == False: # 1 Colonne
-                                indice_last = AGLAEfunction.read_indice_max_x(croissant,sizeX,coord_x,included_x)#,next_x_value[num_line_adc])
+                                indice_last = AGLAEfunction.read_indice_max_x(croissant,coord_x,last_x_in_array)#,next_x_value[num_line_adc])
                             elif change_line == True:
                                 indice_last = AGLAEfunction.read_max_indice_change_colonne(coord_y,y_max_current_scan) #Recherche last_indice avec Y < scan total
-                                if croissant == True:
-                                    included_x = sizeX-1
-                                else:
-                                    included_x = 0     
                                 fin_ligne = True
                            
                        
                         if first_adc_in_block == True:
                           first_adc_in_block = False
                           if croissant == True:
-                              print("X:", first_x_value,"To",included_x,end=",")
+                              print("X:", first_x_value,"To",last_x_in_array,end=",")
                               sleep(0.02)
                                
                           else:
-                              print("X:", last_x_value,"To",included_x,end=",")
+                              print("X:", last_x_value,"To",last_x_in_array,end=",")
                               sleep(0.02)
-                             
-
-                              if included_x == 25:
-                                  included_x = 25
+             
+                              if last_x_in_array == 25:
+                                  last_x_in_array = 25
 
                         max_data_array = indice_val_to_read[ADC_X, indice_last]
                        
@@ -1387,10 +1385,9 @@ class AGLAEfunction(object):
                         coord_x = coord_x[:indice_last]
                         coord_y = coord_y[:indice_last]
 
-                        if max_data_array > min_last_pos_x_y_in_array:
-                                min_last_pos_x_y_in_array = max_data_array
+                        if max_data_array > min_last_pos_x_y_in_array: 
+                            min_last_pos_x_y_in_array = max_data_array
 
-              
                         non_zero_indices = np.nonzero(indice_val_to_read[num_line_adc, :indice_last])
                         if len(non_zero_indices[0]) < 2:  # pas de valeur pour cet adc dans ce Block de Data Array
                             continue
@@ -1404,88 +1401,44 @@ class AGLAEfunction(object):
                         new_coord_y = coord_y [non_zero_indices]
 
                         #if (croissant == True and last_x_value==sizeX-1) or (croissant == False and last_x_value == 0):
-                        if (croissant == True and included_x==sizeX-1) or (croissant == False and included_x == 0):
+                        if (croissant == True and last_x_in_array==sizeX-1) or (croissant == False and last_x_in_array == 0):
                             fin_ligne = True
-                                                                      
-                        if croissant == True and end_lst_file_found == True: # Si carto stopper avant fin de la ligne
-                            p2 = last_x_value # Je prend la dernier column en compte dans mon histogramme
-                            p1 = first_x_value
-                        if croissant == False and end_lst_file_found == True: # Si carto stopper avant fin de la ligne
-                            p2 = first_x_value # Je prend la dernier column en compte dans mon histogramme
-                            p1 = last_x_value
-                        elif croissant == False:
-                            p2 = last_x_value
-                            p1 = included_x
-                        elif croissant == True:
-                            p2 = included_x #last_x_value -1
-                            p1 = first_x_value
-
                        
                         if croissant == True:
-                            adc3 =adc1[0]
-                            del adc1
-                         
-                            if columns == False:
-                                range_histo = 1
-                            else:
-                                r1 = [p1, p2+1]
-                                range_histo = (p2 - p1)  + 1
-
-
+                            adc1 =adc1[0]
                         else:
-                            new_coord_x = np.delete(new_coord_x, 0)
-                            new_coord_y = np.delete(new_coord_y, 0)
+                            adc1 = np.flip(adc1[0])
 
-                            adc2 = np.delete(adc1[0], 0)
-                            adc3 = np.flip(adc2)
-                            del adc1
-
-                            if columns == False:
-                                range_histo = 1
-                            elif p2>p1:
-                                r1 = [p1, p2+1]
-                                range_histo = (p2 - p1) + 1
-                            else:
-                                range_histo = 1
-                        if num_line_adc == 4:
-                            nb_event_x0 = nb_event_x0 + len(adc3)
+                        if columns == False:
+                            range_histo = 1
+                            H1, xedges, yedges= np.histogram2d(new_coord_y,adc1,bins=(nb_column,nbcanaux),range= ({0, nb_column-1},{0, nbcanaux-1}))
+                        else:
+                            r1 = [first_x_value, last_x_value + 1]
+                            range_histo = (last_x_value - first_x_value)  + 1
+                            H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc1),
+                                                   range=({0, nb_column}, r1, {0, nbcanaux}), 
+                                                   bins=(nb_column, range_histo, nbcanaux))
 
                         if range_histo < 0:
                             print('error range_histo') 
-                        if range_histo==1:
-                           H1, xedges, yedges= np.histogram2d(new_coord_y,adc3,bins=(nb_column,nbcanaux),range= ({0, nb_column-1},{0, nbcanaux-1}))
-                        
-                        else:
-                            # H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc3),
-                            #                        range=({0, nb_column-1}, r1, {0, nbcanaux-1}),
-                            #                        bins=(nb_column, range_histo, nbcanaux))
-                            H1, edges = np.histogramdd((new_coord_y, new_coord_x, adc3),
-                                                   range=({0, nb_column}, r1, {0, nbcanaux}), 
-                                                   bins=(nb_column, range_histo, nbcanaux))
-     
-                                    
-                        if croissant == True:
-                            ind_1 = first_x_value
-                            ind_2 = included_x + 1 # Numpy array exclu le dernier indice
-                        else:
-                            ind_1 = included_x 
-                            ind_2 = last_x_value + 1 # Numpy array exclu le dernier indice
 
+                        indx_1 = first_x_value
+                        indx_2 = last_x_value + 1 # Numpy array exclu le dernier indice  
 
                         if first_x_value == 0:
                             first_x_value=0
                         if num_line_adc <=4: # PIXE HE
                             if range_histo == 1:
-                                cube_one_pass_pixe[num_line_adc][:, ind_1, :] = H1
+                                cube_one_pass_pixe[num_line_adc][:, indx_1, :] = H1
                             else:
-                                cube_one_pass_pixe[num_line_adc][0:,ind_1:ind_2, 0:] = H1
-                                print("ok")
+                                cube_one_pass_pixe[num_line_adc][0:,indx_1:indx_2, 0:] = H1
+                                #print("ok")
 
                         elif num_line_adc == 5 or num_line_adc == 6 or  num_line_adc == 7: # RBS ou RBS135 ou RBS150    
                             if range_histo == 1:
-                                cube_one_pass_rbs[num_line_adc - 5][:, ind_1, :] = H1
+                                cube_one_pass_rbs[num_line_adc - 5][:, indx_1, :] = H1
                             else:
-                                cube_one_pass_rbs[num_line_adc - 5][0:,ind_1:ind_2, 0:] = H1
+                                cube_one_pass_rbs[num_line_adc - 5][0:,indx_1:indx_2, 0:] = H1
 
 
                         elif num_line_adc == 10: # Gamma20
@@ -1493,16 +1446,16 @@ class AGLAEfunction(object):
 
                                 cube_one_pass_gamma20[0][0:, int(next_x_value[num_line_adc]),0:] = H1
                             else:
-                                cube_one_pass_gamma20[0][0:,first_x_value:last_x_value, 0:] = H1
-                                cube_one_pass_gamma20[0][0:,ind_1:ind_2, 0:] = H1
+                               # cube_one_pass_gamma20[0][0:,first_x_value:last_x_value, 0:] = H1
+                                cube_one_pass_gamma20[0][0:,indx_1:indx_2, 0:] = H1
 
                         elif num_line_adc == 11: # Gamma70
                             if range_histo == 1:
                                 cube_one_pass_gamma70[0][0:, first_x_value,0:] = H1
                             else:
                                # cube_one_pass_gamma70[0][0:,first_x_value:last_x_value, 0:] = H1
-                                cube_one_pass_gamma70[0][0:,ind_1:ind_2, 0:] = H1
-                                print("ok")
+                                cube_one_pass_gamma70[0][0:,indx_1:indx_2, 0:] = H1
+                                #print("ok")
                                                
                       
                         # if range_histo != 1 and croissant == True:
@@ -1519,7 +1472,7 @@ class AGLAEfunction(object):
                             data_array_previous = data_array[min_last_pos_x_y_in_array:]
                             adjusted_indices_previous = adjusted_indices
                             b_previous_find_x = True
-                            previous_find_x = included_x
+                            previous_find_x = last_x_in_array
                     else:
                         end_lst_file_found = True
 
@@ -1627,12 +1580,7 @@ class AGLAEfunction(object):
                     metadata_one_adc["Det. type"] = 'Extension not found'
                                             
             else:
-                
-                # for key, value in _dict_config_mpawin_adc.items():
-                #     if str.upper(value) == str_ext_spe:
-                #         adc_indx = int(key)
-                #         break
-
+               
                 if 'X' in str_ext_spe or 'x' in str_ext_spe: # Spectres PIXE
                     metadata_one_adc = dict_adc_metadata_arr[adc_indx]
                     dict_gupix_metadata = gupix_metadata_from_path(_path_spe)
@@ -1848,35 +1796,46 @@ def resource_path(relative_path):
 
 @staticmethod    
 def read_cfg_adc(path=None):
+        dict_config_mpawin_adc = {} 
+        dict_channel_adc = {}
+        dict_combined_adc = {}
+        
+
         if not path: path = 'config_lst2hdf5.ini'
-        config = configparser.ConfigParser()
-        config.read(resource_path(path))  # Utilise resource_path pour trouver le fichier de configuration
-        config.sections()
-        dict_config_mpawin_adc = {}
-        dict_channel_adc ={}
-        dict_combined_adc ={}
-                 
-        nb_channels_pixe = config.getint('NB_CHANNEL', 'PIXE')
-        nb_channels_rbs = config.getint('NB_CHANNEL', 'RBS')
-        nb_channels_gamma20 = config.getint('NB_CHANNEL', 'GAMMA20')
-        nb_channels_gamma70 = config.getint('NB_CHANNEL', 'GAMMA70')
-
-        section_name = 'NB_CHANNEL'
-        for key, value in config[section_name].items():
-            print(f"{key}: {value}")
-            dict_channel_adc[key] = value
-        # Lecture des valeurs de la section MPAWIN
-        
-        section_name = 'CFG_MPAWIN'
-        for key, value in config[section_name].items():
-            print(f"{key}: {value}")
-            dict_config_mpawin_adc[key] = value
-        
-        section_name = 'CFG_CONBINED'
-        for key, value in config[section_name].items():
-            print(f"{key}: {value}")
-            dict_combined_adc['combined' + key] = value
-
+        try:
+            config = configparser.ConfigParser()
+            config.read(resource_path(path))  # Utilise resource_path pour trouver le fichier de configuration
+            config.sections()
+            
+            section_name = 'PACKED_DATA_SIZE'
+            for key, value in config[section_name].items():
+                print(f"{key}: {value}")
+                dict_channel_adc[key] = value
+                    
+            section_name = 'NB_CHANNEL'
+            for key, value in config[section_name].items():
+                print(f"{key}: {value}")
+                dict_channel_adc[key] = value
+            # Lecture des valeurs de la section MPAWIN
+            
+            section_name = 'CFG_MPAWIN'
+            for key, value in config[section_name].items():
+                print(f"{key}: {value}")
+                dict_config_mpawin_adc[key] = value
+            
+            section_name = 'CFG_CONBINED'
+            for key, value in config[section_name].items():
+                print(f"{key}: {value}")
+                dict_combined_adc['combined' + key] = value
+        except Exception as e:
+            print(f"Error reading configuration file: {e}")
+            dict_config_mpawin_adc = {0: "X1", 1: "OFF", 2: "X3", 3: "OFF", 4: "X0", 
+                                  5: "OFF", 6: "RBS135", 7: "RBS150", 8: "Coord_X", 9: "Coord_Y",
+                                    10: "GAMMA20", 11: "GAMMA70"}
+            dict_channel_adc = {"PIXE": 2048, "RBS": 512, "GAMMA20": 2048, "GAMMA70": 4096}
+            dict_combined_adc ={12: "X1+X2",13: "X1+X3",14: "X1+X4",23: "X2+X3",134:"X1+X3+X4",
+                            34: "X3+X4",1234:"X1+X2+X3",10: "X1+X2+X3+X4"}
+            dict_channel_adc["nb_column"] = 6 
        
         return dict_channel_adc,dict_config_mpawin_adc,dict_combined_adc
 
@@ -2255,9 +2214,10 @@ def main(self=None):
     if len(sys.argv) < 2:
         print("Usage:  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
 
-        #_path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
-        _path_lst = "C:\\Data\\2026\\aa\\lst\\20260130_0005_STD_SRV_IBA.lst"
-        _path_lst = "C:\\Data\\2024\\test_hdf5_2024\\20240115_0001_STD_SIBILLA_IBA.lst"
+        _path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
+        #_path_lst ="C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0025_OBJ_SRV-VISHNU_IBA.lst"
+        #_path_lst = "C:\\Data\\2026\\aa\\lst\\20260130_0006_STD_SRV_IBA.lst"
+       # _path_lst = "C:\\Data\\2024\\test_hdf5_2024\\20240115_0001_STD_SIBILLA_IBA.lst"
         _path_ascii = "NULL"
         _path_ascii = "C:\\Data\\2025\\Yvan_IBIL\\20250630_SRV-Vishnu\\20250630_0001_STD_SRV-VISHNU_IBA.x0"
         _fnct = "MAPS"
