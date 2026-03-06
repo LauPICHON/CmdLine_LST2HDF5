@@ -1035,7 +1035,7 @@ class AGLAEfunction(object):
 
                         if croissant == True:
                             _1st_x_found = first_x_value
-                            if (last_x_value - 1) >= 0 and last_x_value - 1 >= final_x_found and end_lst_file_found == False:
+                            if (last_x_value - 1) >= 0 and last_x_value - 1 <= final_x_found and end_lst_file_found == False:
                                 final_x_found = last_x_value -1
                             else:
                                 final_x_found = last_x_value
@@ -1081,15 +1081,13 @@ class AGLAEfunction(object):
         sizeX = int(sizeX)
         sizeY = int(sizeY)
    
-        adcnum = []
-        
-
+              
         nbcanaux = 1024
         nbcanaux_pixe = int(_dict_channel_adc['pixe'])
         nbcanaux_gamma20 = int(_dict_channel_adc['gamma20'])
         nbcanaux_gamma70 = int(_dict_channel_adc['gamma70'])
         nbcanaux_rbs = int(_dict_channel_adc['rbs'])
-        nb_column_to_read = int(_dict_channel_adc['nb_column'])
+        chunck_size_to_read = int(_dict_channel_adc['nb_chunk'])
         # cube = np.zeros((sizeX, sizeY, nbcanaux), 'u4')
         # for i in range (0,50):
 
@@ -1121,29 +1119,22 @@ class AGLAEfunction(object):
             size_lst = int(size_lst)  # car on lit des Uint16 donc 2 fois moins que le nombre de bytes (Uint8)
             size_block = size_lst
             nb_col = 2
-            # if size_lst < 5*10**6:
-            nb_col = np.int16((nb_column_total /nb_pass_y )/nb_column_to_read)
-            # else:
-                # nb_col = nb_column_to_read
+ 
+            nb_col = np.int16(sizeX/chunck_size_to_read)
 
-            #nb_col = 2
-
-            size_one_scan = size_lst / (nb_pass_y)
-            size_4_column_scan = (size_one_scan / (sizeX)) * nb_col #/(sizeX/40))  # taille 4 column
-            size_block = int(size_4_column_scan)
-            size_block_big = int(size_4_column_scan) * 2
-            large_map = False
-            #size_block = 15000
-            if size_lst > 1000000 and sizeX > 40:
-                large_map = True
-       
+            if nb_col < 2:
+                nb_col = 2
+ 
+            size_one_scan_x = size_lst / (nb_pass_y)
+            size_chunk = (size_one_scan_x / (sizeX)) * nb_col #/(sizeX/40))  # taille 4 column
+            size_block = int(size_chunk)
             
+                        
             if nb_pass_y == 1 and size_lst < 50*10**6: 
                 size_block = size_lst
-            # size_block = 100000
+            
             nb_read_total = 0
-            
-            
+                        
             if size_lst > size_block:
                 nb_loop = int(size_lst / size_block)
                 nb_loop += 1
@@ -1154,7 +1145,6 @@ class AGLAEfunction(object):
                 nb_pass_y = 1
 
             nb_byte_to_read = size_block
-            indice_in_datablock = 0
             nb_read_total = 0
             max_val_y_lue = 0
             croissant = True
@@ -1165,13 +1155,9 @@ class AGLAEfunction(object):
             last_x_maps = 0
             columns = True
             nb_adc_not_found = 0
-            
-            if nb_pass_y % 2 == 0:
-                last_x_maps = 0
-            else:
-                last_x_maps = sizeX - 1
             nb_total_event = 0
             progress =0 
+            nb_read_total2 = 0
             for num_pass_y in range(nb_pass_y):
                 """Process each pass for each pass line """
                 print(num_pass_y +1,"//",nb_pass_y,end='\n')
@@ -1180,26 +1166,28 @@ class AGLAEfunction(object):
                     break   
                 if (num_pass_y % 2 == 0):
                     croissant = True
-                    next_x_value = np.zeros(12, dtype=np.uint16)
+                    print("scan croissant", end='\n')
+                    
                 else:
                     croissant = False
-                    next_x_value = np.full(12, sizeX - 1, dtype=np.uint16)
+              
+                    print("scan decroissant", end='\n')
 
 
                 end_lst_file_found = False
                 y_max_current_scan = y_scan + (num_pass_y * nb_column)
 
-                cube_one_pass_pixe = np.empty((5, nb_column, sizeX, nbcanaux_pixe), dtype=np.uint32)
-                cube_one_pass_gamma20 = np.empty((1, nb_column, sizeX, nbcanaux_gamma20), dtype=np.uint32)
-                cube_one_pass_gamma70 = np.empty((1, nb_column, sizeX, nbcanaux_gamma70), dtype=np.uint32)
-                cube_one_pass_rbs = np.empty((3, nb_column, sizeX, nbcanaux_rbs), dtype=np.uint32)
+                cube_one_pass_pixe = np.zeros((5, nb_column, sizeX, nbcanaux_pixe), dtype=np.uint32)
+                cube_one_pass_gamma20 = np.zeros((1, nb_column, sizeX, nbcanaux_gamma20), dtype=np.uint32)
+                cube_one_pass_gamma70 = np.zeros((1, nb_column, sizeX, nbcanaux_gamma70), dtype=np.uint32)
+                cube_one_pass_rbs = np.zeros((3, nb_column, sizeX, nbcanaux_rbs), dtype=np.uint32)
 
                 fin_ligne = False
                 change_line= False
                 zero_off = False
                 previous_find_x = 0
                 b_previous_find_x = False
-                   
+                begin_line = True
                 while (fin_ligne == False and end_lst_file_found == False):  # max_val_y_lue <= y_scan): # or croissa nte == False ):
 
                     adc2read = 0
@@ -1207,12 +1195,27 @@ class AGLAEfunction(object):
                     data_array = np.empty(0, dtype=np.uint16)
                     adjusted_indices = np.empty(0, dtype=np.uint16)
                     adjusted_indices_previous = np.empty(0, dtype=np.uint16)
-            
-                    nb_byte_to_read = size_block
-                              
-                    min_last_pos_x_y_in_array = 0 #nb_byte_to_read
-                    data_array = np.fromfile(file_lst, dtype=np.uint16, count=int(nb_byte_to_read))
-        
+                    
+                    if begin_line and len(data_array_previous) >= int(size_block / 2):
+                        begin_line = False
+                        nb_byte_to_read = int(size_block / 4)
+                        #data_array = np.empty(nb_byte_to_read, dtype=np.uint16)
+                    else:
+                        begin_line = False
+                        nb_byte_to_read = size_block 
+                        
+ 
+#                        data_array = np.fromfile(file_lst, dtype=np.uint16, count=int(nb_byte_to_read))
+                    min_last_pos_x_y_in_array = 0 #nb_byte_to_read                   
+                    data_array = np.fromfile(file_lst, dtype=np.uint16, count=int(nb_byte_to_read))                              
+                    # read_temp = len(data_array)+len(data_array_previous)
+                    # progress += int(((read_temp*2)/size_lst)*100)
+                    
+                    # nb_read_total += (nb_byte_to_read * 2)
+                    nb_read_total += 2*len(data_array) 
+                    progress = int((nb_read_total/size_lst)*100)
+                    
+                    # print("total read : ", nb_read_total, " / ", size_lst, end='\n')
                     if len(data_array) < nb_byte_to_read:
                         end_lst_file_found = True
                         print("\n End LST file found",end='\n' )
@@ -1226,19 +1229,21 @@ class AGLAEfunction(object):
                     adc_values = np.array(data_array[adjusted_indices])
                     if len(data_array) < 1 : 
                         exit 
-                    progress += int(len(data_array)*2*(100/size_lst))
-                    print("progress : ", progress, "%", end='\n')
-                    nb_read_total += (nb_byte_to_read * 2) + len(data_array_previous)
-                    print("total read : ", nb_read_total, " / ", size_lst, end='\n')
+                   
                     conditionXY= AGLAEfunction.get_X_Y_condition(adc_values,ADC_X,ADC_Y)
                     nb_adc_not_found = 0
                     last_indx_x = 0
                     next_x_value_col = 0
                     first_adc_in_block = False
-                    #"""returne min X pour tous les ADC"""
-                    last_x_in_array,_1st_x_found, nb_adc_not_found,change_line= AGLAEfunction.search_min_x_all_adc(array_adc,adc_values,conditionXY,
+                    #"""returne min X pour tous les ADC"""                    
+                    last_x_in_array,_1st_x_found, nb_adc_not_found,change_line= AGLAEfunction.search_min_x_all_adc(array_adc,adc_values,conditionXY,adjusted_indices,data_array,ADC_X,ADC_Y,
                                                                                                                     sizeX,sizeY,croissant,y_max_current_scan,
                                                                                                                     b_previous_find_x,previous_find_x,end_lst_file_found)
+                    
+                    # search_min_x_all_adc(array_adc,adc_values,conditionXY,adjusted_indices,data_array,
+                    #          ADC_X,ADC_Y,sizeX,sizeY,croissant,y_max_current_scan,
+                    #          b_previous_find_x,previous_find_x,end_lst_file_found):
+
                     nb_adc_not_found = 0
                     first_adc_in_block = True
                     val_x_fin_map = get_x_end_line_scan(croissant,sizeX)
@@ -1265,7 +1270,7 @@ class AGLAEfunction(object):
                         first_x_value = last_x_in_array
                         last_x_value = _1st_x_found
 
-                    print("minimum x = {} , maximum x = {}".format(first_x_value, last_x_value), end='\n')
+                    #print("minimum x = {} , maximum x = {}".format(first_x_value, last_x_value), end='\n')
 
                     for num_line_adc in array_adc: #range(12):
                         sleep(0.002)
@@ -1335,11 +1340,8 @@ class AGLAEfunction(object):
                        
                        # Dertermine la dernière valeur X
                         if first_adc_in_block == True:
-                            #included_x =last_x_in_array# AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
                             columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value)
-                            #included_x = AGLAEfunction.get_last_x_to_include(croissant, columns, last_x_value,first_x_value,change_line,fin_lst)
-                        
-                      
+                         
                         if last_x_value < first_x_value and croissant==True: # Cas trop lus de columns
                             last_x_value = sizeX-1
                             columns= AGLAEfunction.get_colums_range(croissant,first_x_value,last_x_value)
@@ -1363,12 +1365,13 @@ class AGLAEfunction(object):
                        
                         if first_adc_in_block == True:
                           first_adc_in_block = False
+                          print("progress: ", progress, "%", end=', ')
                           if croissant == True:
-                              print("X:", first_x_value,"To",last_x_in_array,end=",")
+                              print("X:", first_x_value,"To",last_x_in_array,end="\n")
                               sleep(0.02)
                                
                           else:
-                              print("X:", last_x_value,"To",last_x_in_array,end=",")
+                              print("X:", last_x_value,"To",last_x_in_array,end="\n")
                               sleep(0.02)
              
                               if last_x_in_array == 25:
@@ -1407,7 +1410,7 @@ class AGLAEfunction(object):
                         if croissant == True:
                             adc1 =adc1[0]
                         else:
-                            adc1 = np.flip(adc1[0])
+                            adc1 =adc1[0]# adc1 = np.flip(adc1[0])
 
                         if columns == False:
                             range_histo = 1
@@ -1462,7 +1465,7 @@ class AGLAEfunction(object):
                         #     next_x_value[num_line_adc] = last_x_value
                         # else:
                         #     next_x_value[num_line_adc] = first_x_value
-                        
+                    data_array_previous = []    
                     if nb_adc_not_found < 9:
                         if first_x_value ==0 and croissant == True:
                             zero_off = True     
@@ -1470,7 +1473,7 @@ class AGLAEfunction(object):
                         if min_last_pos_x_y_in_array  < int(shape_data_array):
                             data_array_previous = []
                             data_array_previous = data_array[min_last_pos_x_y_in_array:]
-                            adjusted_indices_previous = adjusted_indices
+                            #adjusted_indices_previous = adjusted_indices
                             b_previous_find_x = True
                             previous_find_x = last_x_in_array
                     else:
@@ -1799,7 +1802,8 @@ def read_cfg_adc(path=None):
         dict_config_mpawin_adc = {} 
         dict_channel_adc = {}
         dict_combined_adc = {}
-        
+        # dict_channel_adc["CHUNK_SIZE"] = 8
+
 
         if not path: path = 'config_lst2hdf5.ini'
         try:
@@ -2214,12 +2218,14 @@ def main(self=None):
     if len(sys.argv) < 2:
         print("Usage:  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
 
-        _path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
+        # _path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
+        _path_lst = "C:\\Data\\2026\\Tranchant\\20260302_0052_OBJ_PEAARL_IBA.lst"
         #_path_lst ="C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0025_OBJ_SRV-VISHNU_IBA.lst"
         #_path_lst = "C:\\Data\\2026\\aa\\lst\\20260130_0006_STD_SRV_IBA.lst"
        # _path_lst = "C:\\Data\\2024\\test_hdf5_2024\\20240115_0001_STD_SIBILLA_IBA.lst"
         _path_ascii = "NULL"
-        _path_ascii = "C:\\Data\\2025\\Yvan_IBIL\\20250630_SRV-Vishnu\\20250630_0001_STD_SRV-VISHNU_IBA.x0"
+        # _path_ascii = "C:\\Data\\2025\\Yvan_IBIL\\20250630_SRV-Vishnu\\20250630_0001_STD_SRV-VISHNU_IBA.x0"
+        _path_ascii = "C:\\Data\\2026\\Tranchant\\ascii\\20260302_0020_OBJ_PEAARL_IBA.x0"
         _fnct = "MAPS"
         #_fnct = "SPECTRA"
     else:
