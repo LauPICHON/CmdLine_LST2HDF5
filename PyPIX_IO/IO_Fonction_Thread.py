@@ -39,7 +39,7 @@ from copy import deepcopy
 import threading
 from datetime import datetime
 from time import perf_counter
-import matplotlib.pyplot as plt
+#import matplotlib.pyplot as plt
 from time import sleep
 from PyPIX_IO.IO_Fonction_Thread import ret_adc_name, binning
 
@@ -155,7 +155,7 @@ class AGLAEFile(object):
    
     @staticmethod
     def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y, bin_factor_x=0,bin_factor_y=0):
-    
+        
         #detectors = [134,13,14,34] #"1+3+4","3+4","1+4","1+3"]
         detectors = [134]
         for num_det in detectors:

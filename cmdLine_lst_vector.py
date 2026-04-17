@@ -83,6 +83,59 @@ class AGLAEfunction(object):
         self.size_x = 0
         self.size_y = 0
         
+    @staticmethod
+    def binning(data, bin_x = 2, bin_y = 2):
+        """Bin the data into specified bins.
+        Parameters:
+        data (Numpy array-like): The input data to be binned.
+        bins (int ): If an integer, the number of pixels to bin together. Default is 2.
+        Returns:
+        tuple: numpy containing:
+                - binned_data: The binned data. """
+        N0, N1, N2 = data.shape
+        # Vérification que les dimensions 0 et 1 sont divisibles par 2
+        #assert N0 % 2 == 0 and N1 % 2 == 0
+        # Reshape pour grouper par 2 sur les deux premiers axes
+        Data_reshaped = data.reshape(N0//bin_x, bin_x, N1//bin_y, bin_y, N2)
+        # Agrégation par moyenne sur les axes regroupés
+        Data_grouped = Data_reshaped.sum(axis=(1,3))
+
+        return Data_grouped
+
+    @staticmethod
+    def write_hdf5_metadata(Path_lst, dict_glob_metadata):
+        """Write metadata to an HDF5 file."""
+        # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
+        head_tail = os.path.split(Path_lst)# Split le Path et le fichier
+        destfile = head_tail[1].split(".")
+        newdestfile = destfile[0] + ".hdf5"
+        iba_para = False
+   
+        if destfile[1] == 'lst':
+            newdestfile = destfile[0] + ".hdf5"
+
+        newdestfile1 =  os.path.join(head_tail[0], newdestfile)
+
+        # print(newdestfile)
+        try:
+            f = h5py.File(newdestfile1, 'a')
+        except:
+             f = h5py.File(newdestfile1, 'w')
+        
+        try:
+            del f["Experimental parameters"]
+        except:
+            pass
+        try:
+            del f["stack/detector"]
+        except:
+            pass
+        iba_para = True
+        
+        if iba_para == True:
+            root = f['/']
+            for exp_attr in dict_glob_metadata:
+                root.attrs[exp_attr] = dict_glob_metadata[exp_attr]
 
     @staticmethod
     def ibil_To_hdf5(path_edf, detname, path_lst, adc_metadata_arr):
@@ -91,32 +144,8 @@ class AGLAEfunction(object):
         #edfout = EdfFile(edfpath)
         stack = EDFStack.EDFStack()
         stack.loadIndexedStack(path_edf)
-        AGLAEfunction.feed_hdf5_map(stack.data, path_lst, "IBIL", 0, metadata_one_adc)
-
-
-    @staticmethod
-    def save_hdf5_antoine(filename, points_map, spectrums_list, group_name="XRF_Analysis", dataset_name="dataset"):
-        """Save data to an HDF5 file in a specific format."""
-        try:
-            assert (len(points_map) == len(spectrums_list))
-        except AssertionError:
-            raise (IndentationError(
-                f"points_map length : {len(points_map)} and spectrum_list length : {len(spectrums_list)} do not match."))
-
-        with h5py.File(filename, 'w') as h5file:
-
-            data = np.zeros((3, 3, 3, len(spectrums_list[0])))
-
-            for index, point in enumerate(points_map):
-                x = point[0]
-                y = point[1]
-                z = point[2]
-                data[x, y, z] = spectrums_list[index]
-
-            subgroup = h5file.require_group(group_name)
-            subgroup.attrs['Analysis date'] = datetime.now().strftime('%d/%m/%Y')
-            subgroup.attrs['Analysis time'] = datetime.now().strftime("%H:%M:%S")
-            dset = subgroup.create_dataset(dataset_name, data=data)
+        AGLAEfunction.feed_hdf5_map(stack.data, path_lst, "IBIL", 0, bin_factor_x=2, bin_factor_y=2, dict_metadata_one_adc=metadata_one_adc)
+   
 
     @staticmethod
     def create_empty_prj_hdf5(filename: str, group_name="Global", file_lock=_FILE_LOCK_1):
@@ -275,23 +304,29 @@ class AGLAEfunction(object):
         hdf.close()
 
     @staticmethod
-    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y, dict_metadata_one_adc):
-        """Feed an HDF5 file with map data."""
-        if mydata.size == 0:
-            print(f"No data to write for detector {detector}")
-            return
- 
+    def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y, bin_factor_x = 1,bin_factor_y = 1,dict_metadata_one_adc = {}):
+        """Write data to HDF5 file from a .lst file."""
         destfile = Pathlst.split(".")
-        newdestfile = destfile[0] + ".hdf5"
-    
+        
+
+        #z = int(mydata.shape[0]/2)
+       # mydata_ag =mydata.reshape((z, mydata.shape[1], mydata.shape[2])).sum (axis=0) 
+        if bin_factor_x > 1 or bin_factor_y > 1:
+           mydata = AGLAEfunction.binning(data= mydata, bin_x= bin_factor_x, bin_y= bin_factor_y)
+           newdestfile = destfile[0] + "_X" + str(bin_factor_x) + "_Y" + str(bin_factor_y) + ".hdf5"
+        else:
+            newdestfile = destfile[0] + ".hdf5"
+
         with h5py.File(newdestfile, 'a') as h5file:
             #group_name = 'data' + str(num_det) + "_" + detector  # "data"
             group_name = detector  # "data"
 
             if num_scan_y != 0:
                     nxData = h5file[f'{group_name}/maps']
+                    #nxData = h5file[f'{group_name}']
                     nxData.resize((nxData.shape[0] + mydata.shape[0],nxData.shape[1] ,nxData.shape[2]))
                     nxData[-mydata.shape[0]:,0:, :] = mydata
+ 
             else:
                     try:
                         del h5file[f'{group_name}']
@@ -301,9 +336,39 @@ class AGLAEfunction(object):
                     dset = nxData.require_dataset('maps', data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
                     for exp_attr in dict_metadata_one_adc:
                         dset.attrs[exp_attr] = dict_metadata_one_adc[exp_attr]
+                    
+        # h5file.close() Avec le with, le fichier est automatiquement fermé après la fin du bloc
+
+
+    # def feed_hdf5_map(mydata, Pathlst, detector, num_scan_y, dict_metadata_one_adc):
+    #     """Feed an HDF5 file with map data."""
+    #     if mydata.size == 0:
+    #         print(f"No data to write for detector {detector}")
+    #         return
+ 
+    #     destfile = Pathlst.split(".")
+    #     newdestfile = destfile[0] + ".hdf5"
+    
+    #     with h5py.File(newdestfile, 'a') as h5file:
+    #         #group_name = 'data' + str(num_det) + "_" + detector  # "data"
+    #         group_name = detector  # "data"
+
+    #         if num_scan_y != 0:
+    #                 nxData = h5file[f'{group_name}/maps']
+    #                 nxData.resize((nxData.shape[0] + mydata.shape[0],nxData.shape[1] ,nxData.shape[2]))
+    #                 nxData[-mydata.shape[0]:,0:, :] = mydata
+    #         else:
+    #                 try:
+    #                     del h5file[f'{group_name}']
+    #                 except Exception:
+    #                     pass
+    #                 nxData = h5file.require_group(f'{group_name}')
+    #                 dset = nxData.require_dataset('maps', data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
+    #                 for exp_attr in dict_metadata_one_adc:
+    #                     dset.attrs[exp_attr] = dict_metadata_one_adc[exp_attr]
                         
-                    #dset = h5file.require_dataset(group_name, data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
-        h5file.close()
+    #                 #dset = h5file.require_dataset(group_name, data = mydata, shape =mydata.shape, dtype=np.uint32, maxshape=(None,None,None), chunks=True, compression="gzip",compression_opts=4)
+    #     h5file.close()
 
     @staticmethod
     def search_ibil_folder(_path_ascii:str):
@@ -332,9 +397,10 @@ class AGLAEfunction(object):
         return ibil_folder_founded,"none"
 
     @staticmethod
-    def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y,_dict_adc_metadata_arr):
+    def create_combined_pixe(cube_one_pass_pixe,pathlst,num_pass_y,bin_factor_x=1,bin_factor_y=1,_dict_adc_metadata_arr={}):
         """Create combined PIXE data from multiple detectors."""
         detectors = [134,13,14,34] #"1+3+4","3+4","1+4","1+3"]
+        metadata_one_adc = {}
         for num_det in detectors:
      
             if num_det == 1234:
@@ -361,48 +427,9 @@ class AGLAEfunction(object):
             mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
             mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
             if mysum1 > 0:
-                AGLAEfunction.feed_hdf5_map(data, pathlst, detector_name, num_pass_y,metadata_one_adc)
-            
-
-    @staticmethod
-    def write_hdf5_metadata(Path_lst, dict_glob_metadata):
-        """Write metadata to an HDF5 file."""
+                AGLAEfunction.feed_hdf5_map(data, pathlst,  detector_name, num_pass_y,bin_factor_x=bin_factor_x, bin_factor_y=bin_factor_y, dict_metadata_one_adc=metadata_one_adc)
         # f = h5py.File('./Data/ReadLst_GZIP.hdf5', 'w')
-        head_tail = os.path.split(Path_lst)# Split le Path et le fichier
-        destfile = head_tail[1].split(".")
-        newdestfile = destfile[0] + ".hdf5"
-        iba_para = False
-   
-        if destfile[1] == 'lst':
-            newdestfile = destfile[0] + ".hdf5"
-
-        newdestfile1 =  os.path.join(head_tail[0], newdestfile)
-
-        # print(newdestfile)
-        try:
-            f = h5py.File(newdestfile1, 'a')
-        except:
-             f = h5py.File(newdestfile1, 'w')
-        
-        try:
-            del f["Experimental parameters"]
-        except:
-            pass
-        try:
-            del f["stack/detector"]
-        except:
-            pass
-        iba_para = True
-        
-        if iba_para == True:
-            root = f['/']
-            for exp_attr in dict_glob_metadata:
-                root.attrs[exp_attr] = dict_glob_metadata[exp_attr]
-
-
-
-        f.close()
-
+      
     @staticmethod
     def write_spectra_hdf5_metadata(Pathfile, dict_glob_metadata):
         """Write metadata to an HDF5 file."""
@@ -1093,7 +1120,7 @@ class AGLAEfunction(object):
 
         return final_x_found, _1st_x_found,nb_adc_not_found,change_line
 
-    def extract_lst_vector(path_lst:str, dict_para_global:dict,_dict_adc_metadata_arr:dict):
+    def extract_lst_vector(path_lst:str, dict_para_global:dict,_dict_adc_metadata_arr:dict,bin_x:int,bin_y:int):
         pathlst1 = path_lst
         log.info("start reading lst file : %s ", path_lst)
         _dict_channel_adc,_dict_config_mpawin_adc,_dict_combined_adc = read_cfg_adc(resource_path("config_lst2hdf5.ini"))
@@ -1118,6 +1145,9 @@ class AGLAEfunction(object):
         header1 = list()
         sizeX = 1
         sizeY = 1
+        bin_x=2
+        bin_y=2
+
         #print(path_lst)
         print("map size = ",dict_para_global['map size x (um)'], dict_para_global['map size y (um)'])
         
@@ -1508,17 +1538,15 @@ class AGLAEfunction(object):
                             else:
                                 cube_one_pass_rbs[num_line_adc - 5][0:,indx_1:indx_2, 0:] = H1
 
-
-                        elif num_line_adc == 10: # Gamma20
+                        elif num_line_adc == 10 :
                             if range_histo == 1:
-
-                                cube_one_pass_gamma20[0][0:, int(next_x_value[num_line_adc]),0:] = H1
+                                cube_one_pass_gamma20[num_line_adc - 10][:, indx_1, :] = H1
                             else:
-                                cube_one_pass_gamma20[0][0:,indx_1:indx_2, 0:] = H1
+                                cube_one_pass_gamma20[num_line_adc - 10][0:,indx_1:indx_2, 0:] = H1
 
                         elif num_line_adc == 11: # Gamma70
                             if range_histo == 1:
-                                cube_one_pass_gamma70[0][0:, first_x_value,0:] = H1
+                                cube_one_pass_gamma70[0][:, indx_1, :] = H1
                             else:
                                 cube_one_pass_gamma70[0][0:,indx_1:indx_2, 0:] = H1
 
@@ -1547,22 +1575,24 @@ class AGLAEfunction(object):
                         detector = ret_adc_name(num_line_adc)
                         if num_line_adc <= 4 :
                             data = cube_one_pass_pixe[num_line_adc]
+                            data2 = data.reshape(data.shape[0]//2, 2, data.shape[1]//2, 2,nbcanaux_pixe).sum(axis=(1, 3))
                         elif num_line_adc == 5 or num_line_adc == 6 or num_line_adc == 7:
                             data = cube_one_pass_rbs[num_line_adc-5]
+                            data2 = data.reshape(data.shape[0]//2, 2, data.shape[1]//2, 2,nbcanaux_rbs).sum(axis=(1, 3))
                         elif num_line_adc == 10:
-                             data = cube_one_pass_gamma20[0]
+                            data = cube_one_pass_gamma20[0]
+                            data2 = data.reshape(data.shape[0]//2, 2, data.shape[1]//2, 2,nbcanaux_gamma20).sum(axis=(1, 3))
                         elif num_line_adc == 11:
                             data = cube_one_pass_gamma70[0]
+                            data2 = data.reshape(data.shape[0]//2, 2, data.shape[1]//2, 2,nbcanaux_gamma70).sum(axis=(1, 3))
 
-                        mysum1 = np.sum(data, axis=0)
+                        mysum1 = np.sum(data2, axis=0)
                         mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
                         mysum1 = np.sum(mysum1, axis=0)  # Somme des lignes
                         if mysum1 > 0:
-                            AGLAEfunction.feed_hdf5_map(data, path_lst, detector, num_pass_y,_dict_adc_metadata_arr[num_line_adc])
+                            AGLAEfunction.feed_hdf5_map(data2, path_lst, detector, num_pass_y,bin_factor_x=bin_x,bin_factor_y=bin_y,dict_metadata_one_adc =_dict_adc_metadata_arr[num_line_adc])
                         
-                    AGLAEfunction.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,_dict_adc_metadata_arr)
-                    
-
+                    AGLAEfunction.create_combined_pixe(cube_one_pass_pixe,path_lst,num_pass_y,bin_factor_x=bin_x,bin_factor_y=bin_y,_dict_adc_metadata_arr=_dict_adc_metadata_arr)
                     print('\n')
 
     def clean_coordX_with_zero(coord_x,coord_y,x_zero_error,sizeX,sizeY,croissant,change_line,previous_find_x):
@@ -2289,6 +2319,8 @@ def gupix_metadata_acq_time_and_dose(path_ascii):
     return acq_time,real_dose
 
 
+
+
 def main(self=None):
     print("hello master")
     
@@ -2296,12 +2328,15 @@ def main(self=None):
     _fnct = "maps"
     _path_ascii = ""
     _ibil = "" 
+
     if len(sys.argv) < 2:
         print("Usage:  <arg1:Path of LST file> <arg2: type of extraction 'maps' or 'spectra'> <arg3:path of one ASCII spectra>")
-
-        # _path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
-        #_path_lst = "C:\\Data\\2026\\tipy\\20260120_0044_PYRALT_TIPY_IBA.lst"
-        _path_lst =  "D:\\00_Data-2026\\marbre\\20260316_0011_A0-6-1MC_DEEPEN-DAP_IBA.lst"
+        #_path_lst = "C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0029_OBJ_SRV-VISHNU_IBA.lst"
+        #_path_lst = "D:\\00_Data-2026\\Tipy\\20250303_0069_OBJ_TIPY_IBA.lst"
+        _path_lst = "C:\\Data\\2026\\20260414_DeTuCo\\20260414_0062_crosssectionelephtusk_DETUCO_IBA.lst"
+        _bin_x = 2
+        _bin_y = 2
+        #_path_lst =  "D:\\00_Data-2026\\marbre\\20260316_0011_A0-6-1MC_DEEPEN-DAP_IBA.lst"
         #_path_lst ="C:\\Data\\2025\\Yvan_IBIL\\lst\\20250630_0025_OBJ_SRV-VISHNU_IBA.lst"
         #_path_lst = "C:\\Data\\2026\\aa\\lst\\20260130_0006_STD_SRV_IBA.lst"
        # _path_lst = "C:\\Data\\2024\\test_hdf5_2024\\20240115_0001_STD_SIBILLA_IBA.lst"
@@ -2313,6 +2348,9 @@ def main(self=None):
     else:
         _fnct = str.upper(lst_arg[1])
         _path_lst = lst_arg[2]
+        _bin_x = 1
+        _bin_y = 1
+
 
         if len(sys.argv) > 2: # En cas de cas MAPS pas d'argument 3
             _path_ascii = lst_arg[3]
@@ -2335,7 +2373,7 @@ def main(self=None):
 
     if _fnct== "MAPS":
         #_config_adc = read_cfg_adc()
-        AGLAEfunction.extract_lst_vector(_path_lst, dict_metadata_global, dict_adc_metadata_arr)
+        AGLAEfunction.extract_lst_vector(_path_lst, dict_metadata_global, dict_adc_metadata_arr, bin_x=_bin_x, bin_y=_bin_y)
         AGLAEfunction.write_hdf5_metadata(_path_lst, dict_metadata_global)
         ibil = False
         if _path_ascii != "NULL":
